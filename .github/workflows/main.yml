@@ -2,7 +2,7 @@ name: Signal Bot
 
 on:
   schedule:
-    - cron: "*/10 * * * *"  # tiap 10 menit
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,11 +18,14 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install deps
-        run: pip install gate-api pandas numpy supabase requests
+      - name: Install dependencies
+        run: |
+          pip install gate-api pandas numpy supabase
 
       - name: Run bot
         env:
+          GATE_API_KEY: ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY: ${{ secrets.GATE_SECRET_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
