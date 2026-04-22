@@ -3239,6 +3239,10 @@ def get_current_equity_usdt() -> float:
     log(f"   💼 Equity: ${ACCOUNT_EQUITY_USDT:.0f} base "
         f"{pnl_sign}{cumulative_pnl:.2f} PnL = ${effective:.2f} efektif")
     return _equity_cache["value"]
+
+def get_drawdown_state() -> dict:
+    """
+    [v7.14 #B] Dual-track drawdown: streak + equity drawdown dari peak.
     """
     [v7.14 #B] Dual-track drawdown: streak + equity drawdown dari peak.
 
