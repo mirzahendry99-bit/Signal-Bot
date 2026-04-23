@@ -1,0 +1,33 @@
+name: Signal Bot — FULL
+
+on:
+  schedule:
+    # Setiap 2 jam — cukup untuk INTRADAY (1h) dan SWING (4h)
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+jobs:
+  full-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install gate-api pandas numpy supabase
+
+      - name: Run INTRADAY + SWING scan
+        env:
+          GATE_API_KEY: ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY: ${{ secrets.GATE_SECRET_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          SCAN_MODE: full
+        run: python bot.py
