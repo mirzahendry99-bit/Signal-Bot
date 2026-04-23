@@ -1,0 +1,5 @@
+gate-api
+pandas
+numpy
+supabase
+requests
