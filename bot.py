@@ -5107,6 +5107,10 @@ def evaluate_open_trades(client) -> dict:
 
             if result == "TP1_PARTIAL":
                 # Tidak tutup trade — update partial_result saja.
+                # [v7.24] Skip jika notifikasi TP1 sudah pernah dikirim
+                if row.get("tp1_notified"):
+                    log(f"   🔕 TP1_PARTIAL sudah dinotifikasi sebelumnya — skip [{pair}]")
+                    continue
                 # closed_at TIDAK diisi agar trade tetap "open" untuk sisa posisi.
                 # [v7.14 #C] Gunakan adaptive ratio berdasarkan RR aktual
                 if entry > 0 and tp1 > 0 and sl > 0:
@@ -5151,6 +5155,12 @@ def evaluate_open_trades(client) -> dict:
                    f"• Realized: {partial_pnl:+.2f} USDT\n"
                    f"• SL digeser ke entry (breakeven)\n"
                    f"• Menunggu TP2 untuk sisa posisi...")
+                # [v7.24] Flag tp1_notified agar notifikasi tidak terkirim ulang
+                try:
+                    supabase.table("signals_v2").update({"tp1_notified": True}) \
+                        .eq("id", trade_id).execute()
+                except Exception as _tne:
+                    log(f"   ⚠️ tp1_notified flag gagal [{pair}]: {_tne}", "warn")
                 continue   # jangan isi result di Supabase — trade masih open
             else:
                 # ── [FIX #3] Hitung PnL aktual sebelum update ────────────
@@ -5823,8 +5833,8 @@ def run():
         f"🔥 Heat: {portfolio_state['portfolio_heat_pct']:.1f}% / {MAX_HEAT_PCT:.0f}% "
         f"| Risk: ${portfolio_state['total_risk_usdt']:.2f} / ${MAX_RISK_USDT:.2f}")
 
-    allow_buy  = not btc["block_buy"] and fg >= 35  # [v7.24] Spot only — blok BUY saat F&G < 35
-    allow_sell = False  # [v7.24] Disabled — spot only, SELL tidak bisa dieksekusi
+    allow_buy  = not btc["block_buy"]
+    allow_sell = fg < FG_SELL_BLOCK
 
     log(f"Mode  : BUY={'✅ aktif' if allow_buy else '⛔ diblokir (BTC drop)'} | "
         f"SELL={'✅ aktif' if allow_sell else f'⛔ diblokir (F&G={fg} ≥ {FG_SELL_BLOCK})'}")
@@ -5917,7 +5927,7 @@ def run():
                     _dedup_memory.add(_dedup_key(pair, "INTRADAY", "SELL"))
 
             # ── SWING BUY ────────────────────────────────────
-            if allow_buy and btc["btc_4h"] > 0 and not cluster_buy_blocked and not already_sent(pair, "SWING", "BUY"):  # [v7.24] SWING BUY butuh BTC 4h positif
+            if allow_buy and not cluster_buy_blocked and not already_sent(pair, "SWING", "BUY"):
                 sig = check_swing(client, pair, price, get_ob_ratio_lazy(pair), btc, side="BUY")
                 if sig:
                     signals.append(sig)
