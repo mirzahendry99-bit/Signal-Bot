@@ -1,34 +1,45 @@
-name: Signal Bot — FULL
+name: Signal Bot — Full Scan
 
 on:
   schedule:
-    # Setiap 1 jam — lebih responsif terhadap peluang baru
-    - cron: "0 * * * *"
-  workflow_dispatch:
+    # Setiap 2 jam (sinkron dengan "Scan berikutnya dalam 2 jam" di bot)
+    - cron: '0 */2 * * *'
+  workflow_dispatch:   # trigger manual dari GitHub Actions UI
 
 jobs:
   full-scan:
+    name: Run INTRADAY + SWING scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15   # [v9.1] dinaikkan dari default 6 → 15 menit
+                          # Runtime aktual ~7 menit (198 pairs × prefetch + dispatch)
+                          # 15 menit memberi buffer 2× untuk kondisi rate limit / retry
+
+    env:
+      GATE_API_KEY:       ${{ secrets.GATE_API_KEY }}
+      GATE_SECRET_KEY:    ${{ secrets.GATE_SECRET_KEY }}
+      SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+      CHAT_ID:            ${{ secrets.CHAT_ID }}
+      INITIAL_EQUITY_USDT: ${{ secrets.INITIAL_EQUITY_USDT }}
+      SCAN_MODE:          full
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-          cache: "pip"
+          python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
-        run: pip install gate-api pandas numpy supabase requests
+        run: pip install -r requirements.txt
 
-      - name: Run INTRADAY + SWING scan
-        env:
-          GATE_API_KEY: ${{ secrets.GATE_API_KEY }}
-          GATE_SECRET_KEY: ${{ secrets.GATE_SECRET_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          SCAN_MODE: full
+      # [v9.1] Unit test wajib dijalankan sebelum bot — cegah deploy kode broken
+      - name: Run unit tests
+        run: python bot.py --test
+
+      - name: Run full scan
         run: python bot.py
