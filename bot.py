@@ -218,7 +218,7 @@ MAX_RISK_TOTAL         = 0.10 # [v9.1] dinaikkan 5%→10% equity — accommodate
 MAX_NOTIONAL_PCT       = 0.85
 # [v9.1] MAX_SAME_SIDE_TRADES: 3→7. Proporsi 7/13 ≈ 54% satu arah — masih terkontrol.
 #        Contoh: 7 BUY + 6 SELL = ok. 8 BUY = ditolak meski total < 13.
-MAX_SAME_SIDE_TRADES   = 7    # max BUY atau SELL aktif sekaligus (directional cap)
+MAX_SAME_SIDE_TRADES   = 13    # max BUY atau SELL aktif sekaligus (directional cap)
 # [v9.1] MAX_BTC_CORR_TRADES: 2→4. Dinaikkan proporsional dengan MAX_OPEN_TRADES baru.
 #        Saat BTC drop, max 4 BUY aktif (bukan 2). Tetap konservatif (30% dari 13).
 MAX_BTC_CORR_TRADES    = 4    # max BUY aktif saat BTC correlation tinggi (stress cap)
