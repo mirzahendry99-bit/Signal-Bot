@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 # Signal Bot v9.2 (audit edition) — lihat CHANGELOG.md untuk riwayat perubahan
+# [v9.2.6] Fix monitor timeout:
+#   - Wick scan di SCAN_MODE=monitor dibatasi 10 bar (was: sampai 1000 bar).
+#     Monitor jalan setiap 5 menit — 10 bar = 10 menit terakhir sudah cukup.
+#     Sebelumnya: 13 trades × 1000 bar = timeout 4 menit → bot diam tanpa notif.
+#   - Workflow monitor timeout-minutes: 4 → 8 (di signal-bot-monitor.yml)
+#   - Workflow full scan timeout-minutes: 15 → 20 (di signal-bot-full.yml)
+#
 # [v9.2.5] Fix EXPIRED result:
 #   - EXPIRED_PROFIT: trade expired saat posisi masih profit → neutral di WR
 #   - EXPIRED_LOSS  : trade expired saat posisi merah → dihitung LOSS
@@ -28,7 +35,7 @@
 #             Data historis n < 3 → skip total | n < 15 → half position size
 #
 # [v9.2 audit] Fixes (audit-driven):
-BOT_VERSION = "9.2.5" # ← ubah satu baris ini saja saat rilis versi baru
+BOT_VERSION = "9.2.6" # ← ubah satu baris ini saja saat rilis versi baru
 #   ⚠️ HIGH severity fix: lifecycle wick detection — _resolve_trade_outcome_via_wicks()
 #      scan 1m candle sejak sent_at; ticker last hanya dipakai sebagai fallback.
 #      Sebelumnya: wick yang menembus SL/TP antara 2 run cron tidak terdeteksi
@@ -4973,7 +4980,13 @@ def _resolve_trade_outcome_via_wicks(client, pair: str, side: str,
         minutes_since = max(1, int((datetime.now(timezone.utc) - sent_at).total_seconds() / 60))
     except Exception:
         minutes_since = 240
-    limit = min(1000, minutes_since + 5)   # +5 menit buffer; cap 1000 bar (~16.7 jam)
+    # [v9.2.5] Monitor mode (jalan setiap 5 menit) → cukup 10 bar terakhir.
+    # Full scan (jalan setiap 2 jam) → scan penuh sampai 1000 bar.
+    # Ini mengurangi waktu monitor dari ~13 detik × 13 trades → ~2 detik × 13 trades.
+    if SCAN_MODE == "monitor":
+        limit = 10   # 10 menit terakhir cukup untuk monitor 5-menit interval
+    else:
+        limit = min(1000, minutes_since + 5)   # +5 menit buffer; cap 1000 bar
 
     # Fetch 1m candles — TIDAK pakai cache karena lifecycle butuh data segar
     try:
