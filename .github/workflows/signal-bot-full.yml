@@ -10,9 +10,10 @@ jobs:
   full-scan:
     name: Run INTRADAY + SWING scan
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # [v9.1] dinaikkan dari default 6 → 15 menit
-                          # Runtime aktual ~7 menit (198 pairs × prefetch + dispatch)
-                          # 15 menit memberi buffer 2× untuk kondisi rate limit / retry
+    # [v9.2.5] Dinaikkan 15 → 20 menit sebagai buffer.
+    # v9.2+ menambahkan wick scan (1m candles per open trade) di evaluate_open_trades
+    # sehingga runtime aktual naik ~1-2 menit dari sebelumnya.
+    timeout-minutes: 20
 
     env:
       GATE_API_KEY:       ${{ secrets.GATE_API_KEY }}
