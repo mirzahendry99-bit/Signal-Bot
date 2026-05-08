@@ -1,0 +1,39 @@
+name: Reset HALT (Manual Override)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Ketik "yes" untuk konfirmasi reset HALT dan streak'
+        required: true
+        default: 'no'
+
+jobs:
+  reset-halt:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'yes' }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run reset_halt
+        env:
+          SCAN_MODE: reset_halt
+          GATE_API_KEY: ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY: ${{ secrets.GATE_SECRET_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python bot.py
