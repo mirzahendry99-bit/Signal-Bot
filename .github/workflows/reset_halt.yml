@@ -1,0 +1,39 @@
+name: Reset HALT & Resume Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Ketik "yes" untuk konfirmasi reset HALT'
+        required: true
+        default: 'no'
+
+jobs:
+  reset-halt:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'yes' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reset HALT dan jalankan full scan
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:          ${{ secrets.CHAT_ID }}
+          SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:     ${{ secrets.SUPABASE_KEY }}
+          GATE_API_KEY:     ${{ secrets.GATE_API_KEY }}
+          GATE_API_SECRET:  ${{ secrets.GATE_API_SECRET }}
+          SCAN_MODE:        reset_halt
+          MICROCAP_ENABLED: "false"
+          SWING_ENABLED:    "true"
+        run: python bot.py
