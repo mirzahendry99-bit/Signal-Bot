@@ -733,7 +733,7 @@ def get_portfolio_state() -> dict:
             supabase.table("signals_v2")
             .select("strategy, side, pair, score, pnl_usdt, sl, entry, position_size")
             .is_("result", "null")
-            .lte("score", 5)          # filter: hanya trade bot_lite (score max ~4)
+            .eq("strategy", "INTRADAY")  # filter: hanya trade bot_lite
             .execute()
             .data
         ) or []
@@ -1118,7 +1118,7 @@ def evaluate_open_trades(client) -> dict:
             supabase.table("signals_v2")
             .select("*")
             .is_("result", "null")
-            .lte("score", 5)          # filter: hanya trade bot_lite (score max ~4)
+            .eq("strategy", "INTRADAY")  # filter: hanya trade bot_lite
             .execute()
             .data
         ) or []
@@ -1756,7 +1756,7 @@ def run():
                 supabase.table("signals_v2")
                 .select("pair, side, entry, sl, tp1, tp2, state, sent_at, score, strategy")
                 .in_("state", ["OPEN", "TP1_HIT"])
-                .lte("score", 5)          # filter: hanya trade bot_lite
+                .eq("strategy", "INTRADAY")  # filter: hanya trade bot_lite
                 .execute()
                 .data
             ) or []
