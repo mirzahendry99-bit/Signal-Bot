@@ -129,7 +129,7 @@ DD_HALT_PCT       = 0.12
 STREAK_WARN       = 3
 STREAK_HALT       = 7
 
-SIGNAL_EXPIRE_HOURS = 36
+SIGNAL_EXPIRE_HOURS = 18          # [v1.4] 36 → 18: lebih sesuai INTRADAY
 
 # ── ACTIVE_HOURS — 24 JAM MODE ───────────────────────────────────────────────
 # [v1.4] Bot berjalan 24 jam penuh — tidak ada jam aktif / jam tidur.
@@ -634,21 +634,26 @@ def get_candles(client, pair: str, interval: str = "1h",
 
 # [HIGH-5] get_all_pairs fixed — list_tickers() tanpa arg, filter _USDT manual
 def get_all_pairs(client) -> list[str]:
-    """Ambil semua pair USDT tradable dari Gate.io."""
+    """Ambil semua pair USDT tradable dari Gate.io, diurutkan volume descending.
+    [v1.4] Priority sort: pair liquid terbesar di-scan duluan →
+    slot 13 terisi pair paling aktif, bukan random.
+    """
     try:
         tickers = client.list_tickers()   # ← tanpa currency_pair argument
-        pairs = []
+        pairs_vol = []
         for t in tickers:
             try:
                 if not str(t.currency_pair).endswith("_USDT"):
                     continue
                 vol = float(t.quote_volume or 0)
                 if vol >= MIN_VOLUME_USDT:
-                    pairs.append(t.currency_pair)
+                    pairs_vol.append((t.currency_pair, vol))
             except Exception:
                 continue
+        # Sort descending by volume — pair paling aktif duluan
+        pairs_vol.sort(key=lambda x: x[1], reverse=True)
         _track_api(True)
-        return pairs
+        return [p for p, _ in pairs_vol]
     except Exception as e:
         log(f"get_all_pairs error: {e}", "error")
         _track_api(False)
@@ -916,7 +921,7 @@ def check_intraday(client, pair: str, price: float,
     if side == "BUY" and btc.get("btc_bearish_trend"):
         return None
 
-    data = get_candles(client, pair, "1h", 100)
+    data = get_candles(client, pair, "1h", 150)  # [v1.4] 100 → 150: EMA lebih akurat
     if data is None:
         return None
     closes, highs, lows, volumes = data
@@ -938,6 +943,12 @@ def check_intraday(client, pair: str, price: float,
 
     if not structure["valid"]:
         return None
+
+    # RSI hard filter — block entry overbought/oversold ekstrem
+    if side == "BUY" and rsi > 70:
+        return None   # overbought — jangan BUY
+    if side == "SELL" and rsi < 30:
+        return None   # oversold — jangan SELL
 
     score = score_signal(
         side, price, closes, highs, lows, volumes,
