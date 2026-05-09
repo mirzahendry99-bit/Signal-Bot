@@ -729,7 +729,7 @@ def get_fear_greed() -> int:
 
 def get_portfolio_state() -> dict:
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS + 12)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS)).isoformat()
         rows = (
             supabase.table("signals_v2")
             .select("strategy, side, pair, score, pnl_usdt, sl, entry, position_size")
@@ -1115,7 +1115,7 @@ def evaluate_open_trades(client) -> dict:
     State machine: OPEN → TP1_HIT → CLOSED
     """
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS + 12)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS)).isoformat()
         open_rows = (
             supabase.table("signals_v2")
             .select("*")
@@ -1754,7 +1754,7 @@ def run():
     def build_open_trades_msg(client_ref) -> str:
         """Buat pesan detail open trades dengan harga terkini, IDR, usia, PnL%."""
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS + 12)).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=SIGNAL_EXPIRE_HOURS)).isoformat()
             open_rows = (
                 supabase.table("signals_v2")
                 .select("pair, side, entry, sl, tp1, tp2, state, sent_at, score, strategy")
