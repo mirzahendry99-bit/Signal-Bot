@@ -121,7 +121,7 @@ MAX_POSITION      = 40.0
 MIN_POSITION      = 12.0
 
 MAX_OPEN_TRADES   = 13          # [TUNE-2] 5 → 13
-MAX_SAME_SIDE     = 10          # [TUNE-3] 3 → 10  (akomodasi 13 slot BUY)
+MAX_SAME_SIDE     = 13          # [TUNE-3] sama dengan MAX_OPEN_TRADES — SELL off jadi BUY bisa full 13
 MAX_RISK_TOTAL    = 0.15        # [TUNE-5] 8% → 15% (13 × 1% = 13%, buffer 2%)
 
 DD_WARN_PCT       = 0.07
@@ -1756,6 +1756,7 @@ def run():
                 supabase.table("signals_v2")
                 .select("pair, side, entry, sl, tp1, tp2, state, sent_at, score, strategy")
                 .in_("state", ["OPEN", "TP1_HIT"])
+                .lte("score", 5)          # filter: hanya trade bot_lite
                 .execute()
                 .data
             ) or []
