@@ -1,0 +1,39 @@
+name: Signal Bot Lite — Monitor (tiap 15 menit)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # setiap 15 menit — cek TP/SL open trades
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    name: Monitor Open Trades
+    runs-on: ubuntu-latest
+    timeout-minutes: 5        # monitor lebih cepat, cukup 5 menit
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install supabase gate-api numpy
+
+      - name: Run monitor
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:             ${{ secrets.CHAT_ID }}
+          GATE_API_KEY:        ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY:     ${{ secrets.GATE_SECRET_KEY }}
+          INITIAL_EQUITY_USDT: ${{ secrets.INITIAL_EQUITY_USDT }}
+          SCAN_MODE:           monitor
+        run: |
+          python bot_lite_v1_4.py
