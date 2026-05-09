@@ -94,7 +94,7 @@ MAX_SIGNALS_CYCLE   = 13        # [TUNE-4] 5 → 13
 DEDUP_HOURS         = 4         # [TUNE-8] 6 → 4
 PAIR_COOLDOWN_HOURS = 12        # [TUNE-7] 24 → 12
 
-MIN_SCORE           = 2.5       # [TUNE-1] 3.5 → 2.5  ← threshold dilonggarkan
+MIN_SCORE           = 3.0       # [TUNE-1b] 2.5 → 3.0 + volume hard filter
 MIN_RR              = 1.2       # [TUNE-6] 1.5 → 1.2  ← RR minimum dilonggarkan
 MAX_ENTRY_DEV       = 0.02
 
@@ -948,6 +948,11 @@ def check_intraday(client, pair: str, price: float,
     if score < MIN_SCORE:
         return None
 
+    # Volume hard filter — wajib ada partisipasi market nyata
+    avg_vol = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
+    if avg_vol > 0 and volumes[-1] < avg_vol * 1.2:
+        return None   # volume tidak cukup kuat — skip
+
     # Adaptive threshold saat BTC bearish
     bearish_cycles = btc.get("btc_bearish_cycles", 0)
     adaptive_min   = MIN_SCORE + (0.5 if bearish_cycles >= 2 else 0.0)
@@ -990,7 +995,7 @@ def check_intraday(client, pair: str, price: float,
     if rr < MIN_RR:
         return None
 
-    tier = "A+" if score >= 3.5 else "A" if score >= 3.0 else "B"  # [TUNE-1] skala disesuaikan
+    tier = "A+" if score >= 3.5 else "A"  # score >= 3.0 baseline
 
     return {
         "pair":          pair,
@@ -1482,16 +1487,14 @@ def send_signal(sig: dict, drawdown_mode: str = "normal") -> bool:
     # Regime icon
     regime_icon = "🔥" if sig["regime"] == "TRENDING" else "〰️"
 
-    # Conviction dari score — [TUNE-1] skala disesuaikan dengan MIN_SCORE=2.5
+    # Conviction dari score — MIN_SCORE=3.0
     score = sig["score"]
     if score >= 3.5:
         conviction = "STRONG ✅✅"
     elif score >= 3.0:
         conviction = "GOOD ✅"
-    elif score >= 2.5:
-        conviction = "MODERATE ⚠️"
     else:
-        conviction = "WEAK 🔻"
+        conviction = "MODERATE ⚠️"
 
     # Why string
     why_parts = []
