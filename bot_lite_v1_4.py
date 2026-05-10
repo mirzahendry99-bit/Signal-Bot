@@ -396,6 +396,154 @@ def calc_adx(closes: list, highs: list, lows: list, period: int = 14) -> float:
         return 20.0
     return sum(dx_list[-period:]) / min(period, len(dx_list))
 
+
+# ════════════════════════════════════════════════════════
+#  ACCUMULATION DETECTION & PUMP FILTER  [v1.4]
+# ════════════════════════════════════════════════════════
+
+def detect_accumulation(closes: list, highs: list, lows: list,
+                        volumes: list, lookback: int = 15) -> dict:
+    """
+    Deteksi fase akumulasi sebelum breakout.
+    Accumulation = harga konsolidasi sempit + OBV naik + volume gradual naik.
+
+    Returns:
+        {
+          "accumulating": bool,
+          "obv_slope": float,   # positif = smart money masuk
+          "cmf": float,         # Chaikin Money Flow, positif = buying pressure
+          "compression": float, # range harga relatif, kecil = konsolidasi
+          "vol_slope": float,   # kemiringan volume, positif = volume naik
+        }
+    """
+    if len(closes) < lookback + 5:
+        return {"accumulating": False, "obv_slope": 0.0,
+                "cmf": 0.0, "compression": 1.0, "vol_slope": 0.0}
+
+    c = closes[-lookback:]
+    h = highs[-lookback:]
+    l = lows[-lookback:]
+    v = volumes[-lookback:]
+
+    # 1. Price compression — range relatif terhadap harga rata-rata
+    avg_price   = sum(c) / len(c)
+    price_range = (max(h) - min(l)) / avg_price if avg_price > 0 else 1.0
+
+    # 2. OBV (On-Balance Volume)
+    obv = [0.0]
+    for i in range(1, len(c)):
+        if c[i] > c[i-1]:
+            obv.append(obv[-1] + v[i])
+        elif c[i] < c[i-1]:
+            obv.append(obv[-1] - v[i])
+        else:
+            obv.append(obv[-1])
+
+    # OBV slope: bandingkan rata-rata 5 pertama vs 5 terakhir
+    obv_early = sum(obv[:5]) / 5
+    obv_late  = sum(obv[-5:]) / 5
+    obv_slope = (obv_late - obv_early) / (abs(obv_early) + 1)
+
+    # 3. CMF — Chaikin Money Flow (14 periode)
+    mf_vol = 0.0
+    total_vol = 0.0
+    for i in range(-14, 0):
+        hi, lo, cl, vl = h[i], l[i], c[i], v[i]
+        hl_range = hi - lo
+        if hl_range > 0:
+            mf_mult = ((cl - lo) - (hi - cl)) / hl_range
+        else:
+            mf_mult = 0.0
+        mf_vol    += mf_mult * vl
+        total_vol += vl
+    cmf = mf_vol / total_vol if total_vol > 0 else 0.0
+
+    # 4. Volume slope — apakah volume gradual naik
+    vol_early  = sum(v[:5]) / 5
+    vol_late   = sum(v[-5:]) / 5
+    vol_slope  = (vol_late - vol_early) / (vol_early + 1)
+
+    # Accumulation terkonfirmasi jika:
+    # - Harga konsolidasi (compression < 8%)
+    # - OBV naik (smart money masuk)
+    # - CMF positif (buying pressure)
+    accumulating = (
+        price_range < 0.08 and
+        obv_slope   > 0.05 and
+        cmf         > 0.0
+    )
+
+    return {
+        "accumulating": accumulating,
+        "obv_slope":    round(obv_slope, 3),
+        "cmf":          round(cmf, 3),
+        "compression":  round(price_range, 3),
+        "vol_slope":    round(vol_slope, 3),
+    }
+
+
+def is_organic_move(closes: list, volumes: list, lookback: int = 10) -> dict:
+    """
+    Bedakan pergerakan organik vs manipulasi/pump dump.
+
+    Manipulation signature:
+    - 1 candle volume > 5× rata-rata (spike ekstrem)
+    - Harga naik > 8% dalam 1-2 candle (velocity terlalu tinggi)
+    - Volume concentration: 1 candle > 60% total volume lookback
+    - Harga langsung reversal setelah spike (pump & dump)
+
+    Returns:
+        {
+          "organic": bool,
+          "reason": str,
+          "spike_ratio": float,   # volume candle terakhir vs avg
+          "velocity": float,      # % perubahan harga 2 candle terakhir
+          "concentration": float, # dominasi volume 1 candle
+        }
+    """
+    if len(closes) < lookback + 2 or len(volumes) < lookback + 2:
+        return {"organic": True, "reason": "data kurang",
+                "spike_ratio": 1.0, "velocity": 0.0, "concentration": 0.0}
+
+    c = closes[-(lookback+2):]
+    v = volumes[-(lookback+2):]
+
+    avg_vol      = sum(v[-lookback-1:-1]) / lookback  # avg tanpa candle terakhir
+    last_vol     = v[-1]
+    spike_ratio  = last_vol / (avg_vol + 1)
+
+    # Price velocity — perubahan harga 2 candle terakhir
+    velocity     = abs(c[-1] - c[-3]) / c[-3] if c[-3] > 0 else 0.0
+
+    # Volume concentration — dominasi 1 candle
+    total_vol_5  = sum(v[-5:])
+    concentration = last_vol / (total_vol_5 + 1)
+
+    # Pump & dump signature — naik tajam lalu langsung reversal
+    pnd = (c[-2] > c[-3] * 1.05) and (c[-1] < c[-2] * 0.98)
+
+    # Tentukan organic atau tidak
+    if spike_ratio > 5.0:
+        return {"organic": False, "reason": f"volume spike {spike_ratio:.1f}×",
+                "spike_ratio": round(spike_ratio,2), "velocity": round(velocity,3),
+                "concentration": round(concentration,3)}
+    if velocity > 0.10:
+        return {"organic": False, "reason": f"velocity terlalu tinggi {velocity*100:.1f}%",
+                "spike_ratio": round(spike_ratio,2), "velocity": round(velocity,3),
+                "concentration": round(concentration,3)}
+    if concentration > 0.65:
+        return {"organic": False, "reason": f"volume terkonsentrasi {concentration*100:.0f}%",
+                "spike_ratio": round(spike_ratio,2), "velocity": round(velocity,3),
+                "concentration": round(concentration,3)}
+    if pnd:
+        return {"organic": False, "reason": "pump & dump pattern",
+                "spike_ratio": round(spike_ratio,2), "velocity": round(velocity,3),
+                "concentration": round(concentration,3)}
+
+    return {"organic": True, "reason": "ok",
+            "spike_ratio": round(spike_ratio,2), "velocity": round(velocity,3),
+            "concentration": round(concentration,3)}
+
 def detect_regime(closes: list, highs: list, lows: list) -> dict:
     adx = calc_adx(closes, highs, lows)
     if adx >= ADX_TREND:
@@ -964,6 +1112,18 @@ def check_intraday(client, pair: str, price: float,
     if avg_vol > 0 and volumes[-1] < avg_vol * 1.2:
         return None   # volume tidak cukup kuat — skip
 
+    # Pump filter — tolak manipulasi/pump dump
+    pump = is_organic_move(closes, volumes)
+    if not pump["organic"]:
+        log(f"      {pair} — pump filter: {pump['reason']} — skip")
+        return None
+
+    # Accumulation bonus — reward setup yang punya akumulasi sebelum breakout
+    accu = detect_accumulation(closes, highs, lows, volumes)
+    if accu["accumulating"]:
+        score = round(score + 0.3, 2)   # bonus akumulasi terdeteksi
+        log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
+
     # Adaptive threshold saat BTC bearish
     bearish_cycles = btc.get("btc_bearish_cycles", 0)
     adaptive_min   = MIN_SCORE + (0.5 if bearish_cycles >= 2 else 0.0)
@@ -1024,6 +1184,9 @@ def check_intraday(client, pair: str, price: float,
         "rsi":           round(rsi, 1),
         "regime":        mkt["regime"],
         "adx":           mkt["adx"],
+        "accumulating":  accu.get("accumulating", False),
+        "obv_slope":     accu.get("obv_slope", 0.0),
+        "cmf":           accu.get("cmf", 0.0),
     }
 
 # ════════════════════════════════════════════════════════
@@ -1539,7 +1702,8 @@ def send_signal(sig: dict, drawdown_mode: str = "normal") -> bool:
         f"Hist WR:    {hist_wr['icon']} {hist_wr['label']}\n"
         f"Conviction: {conviction}\n"
         f"Why:        {why_str}\n"
-        f"💰 Pos.Size : ${size:.2f} USDT (tier-adjusted)\n"
+        + (f"🔍 Akumulasi: OBV {sig.get('obv_slope',0):+.2f} | CMF {sig.get('cmf',0):+.2f} ✅\n" if sig.get("accumulating") else "")
+        + f"💰 Pos.Size : ${size:.2f} USDT (tier-adjusted)\n"
         f"⚠️ Pasang SL wajib. Ini signal, bukan rekomendasi finansial."
     )
     return True
