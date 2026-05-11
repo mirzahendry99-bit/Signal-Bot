@@ -1233,59 +1233,92 @@ def portfolio_allows(sig: dict, state: dict, drawdown: dict) -> bool:
 
 def _resolve_trade_from_candles(trade: Trade,
                                  candle_highs: list,
-                                 candle_lows: list) -> tuple[str | None, float | None]:
+                                 candle_lows: list) -> tuple[str | None, float | None, float | None]:
     """
     Periksa candle highs/lows untuk transisi state.
     Check SL dulu (worst case) sebelum TP — konservatif.
-    Return (result_str, pnl) atau (None, None) jika tidak ada event.
+
+    Return (result_str, pnl, new_sl_breakeven):
+      - result_str    : "SL" | "TP2" | "TP1_HIT" | "SL_AFTER_TP1" | None
+      - pnl           : float atau None
+      - new_sl_breakeven: float (trailing SL terbaru) atau None
+
+    [v1.4] Trailing SL untuk state TP1_HIT:
+      - Trail distance = 50% jarak TP1-Entry
+      - SL naik mengikuti harga tertinggi tiap candle
+      - Minimum: tidak pernah di bawah entry (breakeven)
     """
     if trade.state == "OPEN":
         if trade.side == "BUY":
             for lo, hi in zip(candle_lows, candle_highs):
                 if lo <= trade.sl:
                     pnl = (trade.sl - trade.entry) / trade.entry * trade.size
-                    return "SL", round(pnl, 4)
+                    return "SL", round(pnl, 4), None
                 if hi >= trade.tp2:
                     pnl = (trade.tp2 - trade.entry) / trade.entry * trade.size
-                    return "TP2", round(pnl, 4)
+                    return "TP2", round(pnl, 4), None
                 if hi >= trade.tp1:
-                    return "TP1_HIT", None   # transisi state, bukan close
+                    return "TP1_HIT", None, None
         else:  # SELL
             for lo, hi in zip(candle_lows, candle_highs):
                 if hi >= trade.sl:
                     pnl = (trade.entry - trade.sl) / trade.entry * trade.size
-                    return "SL", round(pnl, 4)
+                    return "SL", round(pnl, 4), None
                 if lo <= trade.tp2:
                     pnl = (trade.entry - trade.tp2) / trade.entry * trade.size
-                    return "TP2", round(pnl, 4)
+                    return "TP2", round(pnl, 4), None
                 if lo <= trade.tp1:
-                    return "TP1_HIT", None
+                    return "TP1_HIT", None, None
 
     elif trade.state == "TP1_HIT":
-        be_sl = trade.sl_breakeven if trade.sl_breakeven is not None else trade.entry
-        # remaining_size adalah 50% dari original size, di-set saat TP1_HIT
-        rem = trade.remaining_size if trade.remaining_size is not None else trade.size * 0.5
-        if trade.side == "BUY":
-            for lo, hi in zip(candle_lows, candle_highs):
-                if lo <= be_sl:
-                    # Keluar di breakeven — lock TP1 partial gain (50%)
-                    pnl = (trade.tp1 - trade.entry) / trade.entry * (trade.size * 0.5)
-                    return "SL_AFTER_TP1", round(pnl, 4)
-                if hi >= trade.tp2:
-                    # TP2 hanya pada remaining_size (50%) — bukan full size
-                    pnl = (trade.tp2 - trade.entry) / trade.entry * rem
-                    return "TP2", round(pnl, 4)
-        else:
-            for lo, hi in zip(candle_lows, candle_highs):
-                if hi >= be_sl:
-                    pnl = (trade.entry - trade.tp1) / trade.entry * (trade.size * 0.5)
-                    return "SL_AFTER_TP1", round(pnl, 4)
-                if lo <= trade.tp2:
-                    # TP2 hanya pada remaining_size (50%) — bukan full size
-                    pnl = (trade.entry - trade.tp2) / trade.entry * rem
-                    return "TP2", round(pnl, 4)
+        # ── Trailing SL logic [v1.4] ──────────────────────────────────
+        # Trail distance: 50% dari jarak TP1-Entry
+        trail_dist = abs(trade.tp1 - trade.entry) * 0.5
+        current_be = trade.sl_breakeven if trade.sl_breakeven is not None else trade.entry
+        rem        = trade.remaining_size if trade.remaining_size is not None else trade.size * 0.5
 
-    return None, None
+        if trade.side == "BUY":
+            running_sl = current_be   # trailing SL berjalan
+            for lo, hi in zip(candle_lows, candle_highs):
+                # Update trailing SL jika harga naik lebih tinggi
+                new_trail = hi - trail_dist
+                if new_trail > running_sl:
+                    running_sl = new_trail
+                # Minimum di entry (breakeven)
+                running_sl = max(running_sl, trade.entry)
+
+                # Cek apakah kena trailing SL
+                if lo <= running_sl:
+                    pnl = (running_sl - trade.entry) / trade.entry * (trade.size * 0.5)
+                    return "SL_AFTER_TP1", round(pnl, 4), round(running_sl, 8)
+
+                # Cek TP2
+                if hi >= trade.tp2:
+                    pnl = (trade.tp2 - trade.entry) / trade.entry * rem
+                    return "TP2", round(pnl, 4), round(running_sl, 8)
+
+            # Tidak ada event — kembalikan trailing SL terbaru untuk update DB
+            return None, None, round(running_sl, 8)
+
+        else:  # SELL
+            running_sl = current_be
+            for lo, hi in zip(candle_lows, candle_highs):
+                new_trail = lo + trail_dist
+                if new_trail < running_sl:
+                    running_sl = new_trail
+                running_sl = min(running_sl, trade.entry)
+
+                if hi >= running_sl:
+                    pnl = (trade.entry - running_sl) / trade.entry * (trade.size * 0.5)
+                    return "SL_AFTER_TP1", round(pnl, 4), round(running_sl, 8)
+
+                if lo <= trade.tp2:
+                    pnl = (trade.entry - trade.tp2) / trade.entry * rem
+                    return "TP2", round(pnl, 4), round(running_sl, 8)
+
+            return None, None, round(running_sl, 8)
+
+    return None, None, None
 
 
 def evaluate_open_trades(client) -> dict:
@@ -1396,7 +1429,19 @@ def evaluate_open_trades(client) -> dict:
             continue
 
         # Resolve state transition dari candle data
-        event, pnl = _resolve_trade_from_candles(trade, candle_highs, candle_lows)
+        event, pnl, new_be = _resolve_trade_from_candles(trade, candle_highs, candle_lows)
+
+        # Trailing SL update — simpan ke DB jika SL naik
+        if trade.state == "TP1_HIT" and new_be is not None:
+            current_be = trade.sl_breakeven if trade.sl_breakeven is not None else trade.entry
+            if new_be > current_be + 0.000001:  # ada pergerakan signifikan
+                try:
+                    supabase.table("signals_v2").update({
+                        "sl_breakeven": new_be
+                    }).eq("id", trade.id).execute()
+                    log(f"   📈 {trade.pair} trailing SL: {current_be:.6f} → {new_be:.6f}")
+                except Exception as e:
+                    log(f"   trailing SL update error ({trade.pair}): {e}", "warn")
 
         if event is None:
             continue
@@ -1423,6 +1468,7 @@ def evaluate_open_trades(client) -> dict:
                     f"• 50% posisi ditutup (adaptive RR={trade.score:.1f})\n"
                     f"• Realized: <b>+{realized_pnl:.2f} USDT</b>\n"
                     f"• SL digeser ke entry (breakeven)\n"
+                    f"• 🔒 Trailing SL aktif — SL naik otomatis mengikuti harga\n"
                     f"• Menunggu TP2 untuk sisa posisi..."
                 )
                 append_jsonl({
