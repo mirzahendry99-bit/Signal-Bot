@@ -705,16 +705,54 @@ def calc_sl_tp(entry: float, side: str, atr: float,
 # ════════════════════════════════════════════════════════
 
 def calc_position_size(entry: float, sl: float, equity: float,
-                       drawdown_mode: str = "normal") -> float:
+                       drawdown_mode: str = "normal",
+                       score: float = 3.0, rr: float = 1.5) -> float:
+    """
+    Position sizing berdasarkan risk per trade + adjustment RR/Score [Feature 2].
+
+    Score multiplier:
+      score >= 3.8 → 1.20× (setup sangat kuat)
+      score >= 3.5 → 1.10×
+      score >= 3.0 → 1.00× (baseline)
+
+    RR multiplier:
+      rr >= 2.0   → 1.10× (reward tinggi)
+      rr >= 1.5   → 1.00× (baseline)
+      rr <  1.5   → 0.90× (reward terbatas)
+
+    Combined max: 1.20 × 1.10 = 1.32× dari base size.
+    """
     sl_pct = abs(entry - sl) / entry
     if sl_pct <= 0:
         return MIN_POSITION
-    size = equity * RISK_PER_TRADE / sl_pct
-    size = max(size, MIN_POSITION)
-    size = min(size, MAX_POSITION)
-    size = min(size, equity * 0.12)
-    mult = {"normal": 1.0, "warn": 0.7, "halt": 0.4}.get(drawdown_mode, 1.0)
-    return round(size * mult, 2)
+
+    base = equity * RISK_PER_TRADE / sl_pct
+    base = max(base, MIN_POSITION)
+    base = min(base, MAX_POSITION)
+    base = min(base, equity * 0.12)
+
+    # Score multiplier
+    if score >= 3.8:
+        score_mult = 1.20
+    elif score >= 3.5:
+        score_mult = 1.10
+    else:
+        score_mult = 1.00
+
+    # RR multiplier
+    if rr >= 2.0:
+        rr_mult = 1.10
+    elif rr >= 1.5:
+        rr_mult = 1.00
+    else:
+        rr_mult = 0.90
+
+    # Drawdown multiplier
+    dd_mult = {"normal": 1.0, "warn": 0.7, "halt": 0.4}.get(drawdown_mode, 1.0)
+
+    size = base * score_mult * rr_mult * dd_mult
+    size = min(size, MAX_POSITION)   # cap tetap berlaku
+    return round(size, 2)
 
 # ════════════════════════════════════════════════════════
 #  GATE.IO — CANDLES & TICKER
@@ -734,6 +772,39 @@ def calc_position_size(entry: float, sl: float, equity: float,
 # Fix: pakai c[1] yang selalu ada dan merupakan trading volume sebenarnya.
 
 _CANDLE_FORMAT_LOGGED = False   # log field order sekali saja saat startup
+
+
+def get_trending_pairs(gate_pairs: list[str]) -> list[str]:
+    """
+    Ambil trending coins dari CoinGecko (free, tanpa API key).
+    Filter hanya yang tersedia di Gate.io dan ada di gate_pairs.
+
+    CoinGecko trending = top coins berdasarkan search volume 24h —
+    sering jadi leading indicator sebelum harga bergerak.
+    """
+    try:
+        req = urllib.request.Request(
+            "https://api.coingecko.com/api/v3/search/trending",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data     = json.loads(r.read())
+            coins    = data.get("coins", [])
+            gate_set = set(gate_pairs)
+            trending = []
+
+            for item in coins:
+                symbol = item.get("item", {}).get("symbol", "").upper()
+                pair   = f"{symbol}_USDT"
+                if pair in gate_set and pair not in trending:
+                    trending.append(pair)
+
+            if trending:
+                log(f"🔥 Trending coins dari CoinGecko: {', '.join(trending)}")
+            return trending
+    except Exception as e:
+        log(f"get_trending_pairs error: {e}", "warn")
+        return []
 
 def get_candles(client, pair: str, interval: str = "1h",
                 limit: int = 100) -> tuple | None:
@@ -791,17 +862,31 @@ def get_all_pairs(client) -> list[str]:
     try:
         tickers = client.list_tickers()   # ← tanpa currency_pair argument
         pairs_vol = []
+        # Token yang di-exclude
+        EXCLUDED_SUFFIXES = [
+            "3L_USDT", "3S_USDT",   # 3× leveraged
+            "5L_USDT", "5S_USDT",   # 5× leveraged
+            "2L_USDT", "2S_USDT",   # 2× leveraged
+            "UP_USDT", "DOWN_USDT", # Binance-style leveraged
+        ]
+
         for t in tickers:
             try:
-                if not str(t.currency_pair).endswith("_USDT"):
+                pair = str(t.currency_pair)
+                if not pair.endswith("_USDT"):
+                    continue
+                # Skip leveraged tokens
+                if any(pair.endswith(suf) for suf in EXCLUDED_SUFFIXES):
                     continue
                 vol = float(t.quote_volume or 0)
                 if vol >= MIN_VOLUME_USDT:
-                    pairs_vol.append((t.currency_pair, vol))
+                    pairs_vol.append((pair, vol))
             except Exception:
                 continue
-        # Sort descending by volume — pair paling aktif duluan
+
+        # Sort descending by volume — top 300 paling liquid
         pairs_vol.sort(key=lambda x: x[1], reverse=True)
+        pairs_vol = pairs_vol[:150]   # top 150 paling liquid (~90% overlap CMC)
         _track_api(True)
         return [p for p, _ in pairs_vol]
     except Exception as e:
@@ -1139,9 +1224,41 @@ def check_intraday(client, pair: str, price: float,
         score = round(score + 0.3, 2)   # bonus akumulasi terdeteksi
         log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
 
+    # Multi-timeframe 4h confirmation [Feature 3]
+    # Fetch 4h hanya setelah score lolos — hemat API call
+    data_4h = get_candles(client, pair, "4h", 60)
+    if data_4h:
+        closes_4h, highs_4h, lows_4h, _ = data_4h
+        ema20_4h = calc_ema(closes_4h, 20)
+        ema50_4h = calc_ema(closes_4h, 50)
+        macd_4h, msig_4h = calc_macd(closes_4h)
+
+        if side == "BUY":
+            # 4h harus bullish: EMA20 > EMA50 DAN MACD > signal
+            tf4_bullish = (ema20_4h > ema50_4h) and (macd_4h > msig_4h)
+            if not tf4_bullish:
+                return None   # 1h bullish tapi 4h tidak konfirmasi — skip
+        else:  # SELL
+            tf4_bearish = (ema20_4h < ema50_4h) and (macd_4h < msig_4h)
+            if not tf4_bearish:
+                return None
+
+    # WR-based threshold per pair [Feature 1]
+    wr_data   = get_pair_winrate(pair)
+    wr_pct    = wr_data.get("win_rate", -1)
+    wr_trades = wr_data.get("total", 0)
+    wr_adj    = 0.0
+    if wr_trades >= 5:
+        if wr_pct <= 30:
+            wr_adj = +0.3    # pair bermasalah — butuh score lebih tinggi
+        elif wr_pct >= 60:
+            wr_adj = -0.2    # pair bagus — sedikit dilonggarkan
+    if wr_adj != 0:
+        log(f"      {pair} WR={wr_pct:.0f}% (n={wr_trades}) → score adj {wr_adj:+.1f}")
+
     # Adaptive threshold saat BTC bearish
     bearish_cycles = btc.get("btc_bearish_cycles", 0)
-    adaptive_min   = MIN_SCORE + (0.5 if bearish_cycles >= 2 else 0.0)
+    adaptive_min   = MIN_SCORE + wr_adj + (0.5 if bearish_cycles >= 2 else 0.0)
     if score < adaptive_min:
         return None
 
@@ -1667,7 +1784,10 @@ def _get_idr_rate() -> float:
 
 def send_signal(sig: dict, drawdown_mode: str = "normal") -> bool:
     equity  = INITIAL_EQUITY
-    size    = calc_position_size(sig["entry"], sig["sl"], equity, drawdown_mode)
+    size    = calc_position_size(
+        sig["entry"], sig["sl"], equity, drawdown_mode,
+        score=sig.get("score", 3.0), rr=sig.get("rr", 1.5)
+    )
     sent_at = datetime.now(timezone.utc).isoformat()
 
     row = {
@@ -1922,7 +2042,15 @@ def run():
 
     log("🔍 Mengambil daftar pair...")
     all_pairs = get_all_pairs(client)
-    log(f"   {len(all_pairs)} pair memenuhi volume minimum")
+    log(f"   {len(all_pairs)} pair top 150 by volume")
+
+    # Tambah trending coins — prioritas scan karena sering leading indicator
+    trending = get_trending_pairs(all_pairs)
+    if trending:
+        # Pindahkan trending ke depan list agar di-scan duluan
+        non_trending = [p for p in all_pairs if p not in trending]
+        all_pairs    = trending + non_trending
+        log(f"   {len(trending)} trending coin diprioritaskan di awal scan")
 
     # [MEDIUM-9] Check API setelah get_all_pairs
     if api_is_degraded():
