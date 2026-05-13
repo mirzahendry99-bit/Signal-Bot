@@ -1865,8 +1865,25 @@ def send_signal(sig: dict, drawdown_mode: str = "normal") -> bool:
     side_icon  = "🟢" if sig["side"] == "BUY"  else "🔴"
     tier_medal = "🥇" if sig["tier"] == "A+" else "🥈" if sig["tier"] == "A" else "🥉"
 
-    tg_signal(
+    # ── STRONG BUY detection ─────────────────────────────────────────────
+    TOP50 = ['BTC_USDT', 'ETH_USDT', 'BNB_USDT', 'SOL_USDT', 'XRP_USDT', 'ADA_USDT', 'DOGE_USDT', 'AVAX_USDT', 'DOT_USDT', 'MATIC_USDT', 'LINK_USDT', 'ATOM_USDT', 'LTC_USDT', 'UNI_USDT', 'XLM_USDT', 'NEAR_USDT', 'ICP_USDT', 'FIL_USDT', 'APT_USDT', 'ARB_USDT', 'OP_USDT', 'INJ_USDT', 'SUI_USDT', 'TIA_USDT', 'SEI_USDT', 'TAO_USDT', 'WIF_USDT', 'JUP_USDT', 'PYTH_USDT', 'STRK_USDT', 'PEPE_USDT', 'SHIB_USDT', 'FLOKI_USDT', 'BONK_USDT', 'WLD_USDT', 'PENDLE_USDT', 'AAVE_USDT', 'MKR_USDT', 'CRV_USDT', 'SNX_USDT', 'FTM_USDT', 'ALGO_USDT', 'VET_USDT', 'HBAR_USDT', 'EOS_USDT', 'TRX_USDT', 'XMR_USDT', 'ZEC_USDT', 'DASH_USDT', 'NEO_USDT']
+    is_strong_buy = (
+        sig["tier"] == "A+"                  and   # score >= 3.5
+        sig.get("accumulating", False)        and   # akumulasi terdeteksi
+        sig["pair"] in TOP50                  and   # pair top 50 liquid
+        fg > 45                               and   # market tidak fearful
+        sig["side"] == "BUY"
+    )
+    header = (
+        f"🚀🚀 ⚡ BELI SEKARANG ⚡ 🚀🚀\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
         f"📈 {tier_medal} [{sig['tier']}] SIGNAL {side_icon} {sig['side']} — {sig['strategy']}\n"
+        if is_strong_buy else
+        f"📈 {tier_medal} [{sig['tier']}] SIGNAL {side_icon} {sig['side']} — {sig['strategy']}\n"
+    )
+
+    tg_signal(
+        header +
         f"━━━━━━━━━━━━━━━━━━\n"
         f"Pair:    {sig['pair']} [{sig['timeframe']}]\n"
         f"⏰ Valid: {valid_from} → {valid_until} WIB\n"
