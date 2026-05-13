@@ -104,6 +104,8 @@ ADX_PERIOD          = 14
 
 BTC_DROP_BLOCK         = -3.0
 BTC_CRASH_BLOCK        = -10.0
+BTC_VOLATILE_1H        = 2.0    # abs(BTC 1h change) > 2% = terlalu volatile
+BTC_RANGE_1H           = 2.5    # BTC 1h high-low range > 2.5% = choppy
 BTC_TREND_LOOKBACK     = 4
 BTC_TREND_MIN_BEARISH  = 3
 
@@ -829,10 +831,21 @@ def get_btc_regime(client) -> dict:
     halt = block_buy = btc_bearish_trend = False
     btc_bearish_cycles = 0
 
+    btc_volatile = False
+    btc_1h_range = 0.0
+
     if data_1h:
         closes = data_1h[0]
+        highs  = data_1h[1]
+        lows   = data_1h[2]
         if len(closes) >= 2:
             btc_1h = (closes[-1] - closes[-2]) / closes[-2] * 100
+        # Volatility: range candle terakhir (high-low / close)
+        if highs and lows and closes:
+            btc_1h_range = (highs[-1] - lows[-1]) / closes[-1] * 100
+        # Flag volatile jika BTC gerak terlalu agresif
+        if abs(btc_1h) >= BTC_VOLATILE_1H or btc_1h_range >= BTC_RANGE_1H:
+            btc_volatile = True
         if btc_1h <= BTC_CRASH_BLOCK:
             halt = True
         elif btc_1h <= BTC_DROP_BLOCK:
@@ -854,6 +867,8 @@ def get_btc_regime(client) -> dict:
     return {
         "btc_1h":             round(btc_1h, 2),
         "btc_4h":             round(btc_4h, 2),
+        "btc_1h_range":       round(btc_1h_range, 2),
+        "btc_volatile":       btc_volatile,
         "halt":               halt,
         "block_buy":          block_buy,
         "btc_bearish_trend":  btc_bearish_trend,
@@ -1851,12 +1866,27 @@ def run():
 
     fg  = get_fear_greed()
     btc = get_btc_regime(client)
+    vol_icon = "⚡" if btc["btc_volatile"] else "✅"
     log(f"🌡️ BTC 1h:{btc['btc_1h']:+.1f}% | 4h:{btc['btc_4h']:+.1f}% | "
+        f"Range:{btc['btc_1h_range']:.1f}% {vol_icon} | "
         f"F&G:{fg} | Trend:{'⚠️ BEARISH' if btc['btc_bearish_trend'] else '✅ OK'}")
 
     if btc["halt"]:
         log("🚨 BTC CRASH — semua signal diblok", "error")
         tg_operator("🚨 <b>BTC Crash Alert</b>\nSemua signal diblok sementara.")
+        save_equity_snapshot(open_trades=lifecycle.get("evaluated", 0))
+        return
+
+    # BTC Volatility guard — skip scan saat BTC terlalu agresif
+    if btc["btc_volatile"]:
+        log(f"⚡ BTC volatile — 1h:{btc['btc_1h']:+.1f}% | "
+            f"range:{btc['btc_1h_range']:.1f}% — scan dilewati", "warn")
+        tg_operator(
+            f"⚡ <b>BTC Volatile — Scan Dilewati</b>\n"
+            f"BTC 1h : {btc['btc_1h']:+.1f}%\n"
+            f"Range  : {btc['btc_1h_range']:.1f}%\n"
+            f"<i>Market terlalu choppy. Open trades tetap dipantau.</i>"
+        )
         save_equity_snapshot(open_trades=lifecycle.get("evaluated", 0))
         return
 
@@ -2094,7 +2124,7 @@ def run():
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Pairs scanned  : {len(all_pairs)}\n"
         f"F&G            : {fg}\n"
-        f"BTC 1h/4h      : {btc['btc_1h']:+.1f}% / {btc['btc_4h']:+.1f}%\n"
+        f"BTC 1h/4h      : {btc['btc_1h']:+.1f}% / {btc['btc_4h']:+.1f}% | Range:{btc['btc_1h_range']:.1f}%\n"
         f"API failures   : {_api_failures}\n"
         f"Sell mode      : {'ON' if SELL_ENABLED else 'OFF (disabled)'}\n"
         f"Equity aktif   : ${INITIAL_EQUITY:.2f} USDT\n"
