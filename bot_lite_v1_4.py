@@ -862,12 +862,13 @@ def get_all_pairs(client) -> list[str]:
     try:
         tickers = client.list_tickers()   # ← tanpa currency_pair argument
         pairs_vol = []
-        # Token yang di-exclude
+        # Blacklist permanen — token yang tidak pernah di-scan
         EXCLUDED_SUFFIXES = [
             "3L_USDT", "3S_USDT",   # 3× leveraged
             "5L_USDT", "5S_USDT",   # 5× leveraged
             "2L_USDT", "2S_USDT",   # 2× leveraged
             "UP_USDT", "DOWN_USDT", # Binance-style leveraged
+            "ON_USDT",              # ETF/stock tracker (BABAON, TSLAON, dll)
         ]
 
         for t in tickers:
@@ -875,7 +876,7 @@ def get_all_pairs(client) -> list[str]:
                 pair = str(t.currency_pair)
                 if not pair.endswith("_USDT"):
                     continue
-                # Skip leveraged tokens
+                # Skip blacklisted tokens
                 if any(pair.endswith(suf) for suf in EXCLUDED_SUFFIXES):
                     continue
                 vol = float(t.quote_volume or 0)
@@ -884,9 +885,8 @@ def get_all_pairs(client) -> list[str]:
             except Exception:
                 continue
 
-        # Sort descending by volume — top 300 paling liquid
+        # Sort by volume — pair paling liquid duluan, scan semua tanpa batas
         pairs_vol.sort(key=lambda x: x[1], reverse=True)
-        pairs_vol = pairs_vol[:150]   # top 150 paling liquid (~90% overlap CMC)
         _track_api(True)
         return [p for p, _ in pairs_vol]
     except Exception as e:
@@ -1014,7 +1014,7 @@ def get_portfolio_state() -> dict:
 
 def get_drawdown_state() -> dict:
     WIN_VALUES  = {"WIN", "TP1", "TP2", "PARTIAL_WIN"}
-    LOSS_VALUES = {"LOSS", "SL", "EXPIRED_LOSS", "SL_AFTER_TP1"}
+    LOSS_VALUES = {"LOSS", "SL", "EXPIRED_LOSS"}
     try:
         rows = (
             supabase.table("signals_v2")
@@ -1390,7 +1390,9 @@ def _resolve_trade_from_candles(trade: Trade,
                     pnl = (trade.tp2 - trade.entry) / trade.entry * trade.size
                     return "TP2", round(pnl, 4), None
                 if hi >= trade.tp1:
-                    return "TP1_HIT", None, None
+                    # [v1.4] Close 100% di TP1
+                    pnl = (trade.tp1 - trade.entry) / trade.entry * trade.size
+                    return "TP1", round(pnl, 4), None
         else:  # SELL
             for lo, hi in zip(candle_lows, candle_highs):
                 if hi >= trade.sl:
@@ -1400,7 +1402,8 @@ def _resolve_trade_from_candles(trade: Trade,
                     pnl = (trade.entry - trade.tp2) / trade.entry * trade.size
                     return "TP2", round(pnl, 4), None
                 if lo <= trade.tp1:
-                    return "TP1_HIT", None, None
+                    pnl = (trade.entry - trade.tp1) / trade.entry * trade.size
+                    return "TP1", round(pnl, 4), None, None
 
     elif trade.state == "TP1_HIT":
         # ── Trailing SL logic [v1.4] ──────────────────────────────────
@@ -2059,7 +2062,7 @@ def run():
 
     log("🔍 Mengambil daftar pair...")
     all_pairs = get_all_pairs(client)
-    log(f"   {len(all_pairs)} pair top 150 by volume")
+    log(f"   {len(all_pairs)} pair (semua, blacklist excluded)")
 
     # Tambah trending coins — prioritas scan karena sering leading indicator
     trending = get_trending_pairs(all_pairs)
