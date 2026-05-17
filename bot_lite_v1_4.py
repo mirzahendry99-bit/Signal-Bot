@@ -94,7 +94,7 @@ MAX_SIGNALS_CYCLE   = 13        # [TUNE-4] 5 → 13
 DEDUP_HOURS         = 4         # [TUNE-8] 6 → 4
 PAIR_COOLDOWN_HOURS = 12        # [TUNE-7] 24 → 12
 
-MIN_SCORE           = 3.0       # [TUNE-1b] 2.5 → 3.0 + volume hard filter
+MIN_SCORE           = 3.5       # [TUNE-1c] 3.0 → 3.5 — score 3.0-3.3 WR 0%
 MIN_RR              = 1.2       # [TUNE-6] 1.5 → 1.2  ← RR minimum dilonggarkan
 MAX_ENTRY_DEV       = 0.02
 
@@ -104,7 +104,7 @@ ADX_PERIOD          = 14
 
 BTC_DROP_BLOCK         = -3.0
 BTC_CRASH_BLOCK        = -10.0
-BTC_VOLATILE_1H        = 2.0    # abs(BTC 1h change) > 2% = terlalu volatile
+BTC_VOLATILE_1H        = 1.5    # abs(BTC 1h change) > 1.5% = terlalu volatile
 BTC_RANGE_1H           = 2.5    # BTC 1h high-low range > 2.5% = choppy
 BTC_TREND_LOOKBACK     = 4
 BTC_TREND_MIN_BEARISH  = 3
@@ -1298,7 +1298,7 @@ def check_intraday(client, pair: str, price: float,
     if rr < MIN_RR:
         return None
 
-    tier = "A+" if score >= 3.5 else "A"  # score >= 3.0 baseline
+    tier = "A+" if score >= 3.8 else "A"  # score >= 3.5 baseline
 
     return {
         "pair":          pair,
@@ -1847,9 +1847,9 @@ def send_signal(sig: dict, drawdown_mode: str = "normal") -> bool:
 
     # Conviction dari score — MIN_SCORE=3.0
     score = sig["score"]
-    if score >= 3.5:
+    if score >= 3.8:
         conviction = "STRONG ✅✅"
-    elif score >= 3.0:
+    elif score >= 3.5:
         conviction = "GOOD ✅"
     else:
         conviction = "MODERATE ⚠️"
