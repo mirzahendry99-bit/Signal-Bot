@@ -45,6 +45,14 @@ jobs:
       - name: Run unit tests
         # [FIX HIGH-4] Jalankan unit tests sebelum bot — gagal jika ada test yang pecah.
         # Bot tidak akan jalan jika kalkulasi SL/TP/score ada regresi.
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:             ${{ secrets.CHAT_ID }}
+          GATE_API_KEY:        ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY:     ${{ secrets.GATE_SECRET_KEY }}
+          INITIAL_EQUITY_USDT: ${{ secrets.INITIAL_EQUITY_USDT }}
         run: python bot_lite_v1_4_1.py --test
 
       - name: Run bot
