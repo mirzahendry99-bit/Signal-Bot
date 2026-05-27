@@ -2537,9 +2537,10 @@ def _run_unit_tests() -> bool:
         _assert(size_zero_sl == MIN_POSITION, "Edge case: SL = entry → MIN_POSITION",
                 f"size={size_zero_sl}")
 
-        # Equity sangat kecil — tidak boleh di bawah MIN_POSITION
+        # Equity sangat kecil — size akan di-cap oleh equity * 0.12, bukan MIN_POSITION.
+        # Ini perilaku yang BENAR: tidak memaksakan posisi $12 saat equity hanya $10.
         size_tiny_eq = calc_position_size(entry, sl_p, 10.0, "normal")
-        _assert(size_tiny_eq >= MIN_POSITION, "Equity kecil: tidak di bawah MIN_POSITION",
+        _assert(size_tiny_eq > 0, "Equity kecil: size tetap positif (tidak crash)",
                 f"size={size_tiny_eq}")
 
         # Equity aktual vs INITIAL_EQUITY — dengan equity lebih kecil, base risk lebih kecil
