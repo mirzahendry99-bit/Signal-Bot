@@ -45,7 +45,7 @@ jobs:
       - name: Run unit tests
         # [FIX HIGH-4] Jalankan unit tests sebelum bot — gagal jika ada test yang pecah.
         # Bot tidak akan jalan jika kalkulasi SL/TP/score ada regresi.
-        run: python bot_lite_v1_4.py --test
+        run: python bot_lite_v1_4_1.py --test
 
       - name: Run bot
         env:
@@ -63,7 +63,7 @@ jobs:
           SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
         run: |
           for i in 1 2 3; do
-            python bot_lite_v1_4.py && break
+            python bot_lite_v1_4_1.py && break
             echo "Attempt $i failed, retrying..."
             sleep 10
           done
