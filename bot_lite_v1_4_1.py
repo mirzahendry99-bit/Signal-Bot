@@ -1,8 +1,22 @@
 # -*- coding: utf-8 -*-
-# Signal Bot Lite v1.4.1 — BUGFIX RELEASE
-# Diturunkan dari v1.4.0-lite
+# Signal Bot Lite v1.4.2 — DATA-DRIVEN TUNING
+# Diturunkan dari v1.4.1
 #
-# CHANGELOG v1.4.0 → v1.4.1
+# CHANGELOG v1.4.1 → v1.4.2
+#   [DATA-1]   MIN_SCORE 3.5 → 3.0: analisis 230 trades menunjukkan score 3.0
+#              adalah satu-satunya range yang profitable (WR ~45%, PnL +$6).
+#              Score 3.5 WR hanya 16% dengan total PnL -$20. Score 2.5 WR 13% (-$16).
+#              Filter lain tetap aktif: 4h MTF confirmation, adaptive_min, volume,
+#              pump filter — sehingga tidak semua score 3.0 lolos otomatis.
+#              Tier B ditambahkan untuk score 3.0–3.4.
+#   [DATA-2]   MIN_RR 1.2 → 1.5: dengan avg loss -$0.97 dan avg win TP2 +$1.03,
+#              RR minimum 1.2 tidak cukup untuk ekspektasi positif jangka panjang.
+#   [DATA-3]   MAX_SL_PCT 5.0% → 3.5%: SL terlalu lebar menyebabkan 127 trades
+#              loss dengan avg -$0.97. Setup dengan noise > 3.5% dari entry dilewati.
+#   [DATA-4]   Time filter ditambahkan: jam 23:00–06:00 WIB diblok default.
+#              Data menunjukkan WR < 30% di jam tersebut (midnight: 29%, 11:00: 17%).
+#              Override via env BLOCK_HOURS_WIB. Monitor lifecycle tetap jalan.
+#
 #   [FIX HIGH-1]   portfolio_allows() menggunakan INITIAL_EQUITY statis → diganti equity aktual
 #                  (INITIAL_EQUITY + cum_pnl). Equity aktual dihitung di run() sekali,
 #                  lalu diteruskan ke get_portfolio_state() → portfolio_allows() → send_signal().
@@ -70,7 +84,7 @@ import gate_api
 #  VERSI & LOGGING
 # ════════════════════════════════════════════════════════
 
-BOT_VERSION = "1.4.1-lite"
+BOT_VERSION = "1.4.2-lite"
 WIB = timezone(timedelta(hours=7))
 
 class _WIBFormatter(logging.Formatter):
@@ -114,8 +128,13 @@ MAX_SIGNALS_CYCLE   = 13        # [TUNE-4] 5 → 13
 DEDUP_HOURS         = 4         # [TUNE-8] 6 → 4
 PAIR_COOLDOWN_HOURS = 12        # [TUNE-7] 24 → 12
 
-MIN_SCORE           = 3.5       # [TUNE-1c] 3.0 → 3.5 — score 3.0-3.3 WR 0%
-MIN_RR              = 1.2       # [TUNE-6] 1.5 → 1.2  ← RR minimum dilonggarkan
+MIN_SCORE           = 3.0       # [DATA-1] 3.5 → 3.0: data 230 trades menunjukkan score 3.0
+                                #          adalah sweet spot — WR ~45%, satu-satunya yang profitable.
+                                #          Score 3.5 WR hanya 16% (-$20 total), score 2.5 WR 13% (-$16).
+                                #          Turun ke 3.0 bukan berarti longgar — filter lain (4h MTF,
+                                #          adaptive_min, volume, pump filter) tetap aktif.
+MIN_RR              = 1.5       # [DATA-2] 1.2 → 1.5: RR 1.2 terlalu longgar. Dengan avg loss -$0.97
+                                #          dan avg win TP2 +$1.03, butuh RR min 1.5 agar ekspektasi positif.
 MAX_ENTRY_DEV       = 0.02
 
 ADX_TREND           = 25
@@ -134,7 +153,10 @@ TP2_R             = 2.5
 SL_ATR_MULT       = 2.0
 ATR_SL_BUFFER     = 0.5
 MIN_SL_PCT        = 0.005
-MAX_SL_PCT        = 0.050
+MAX_SL_PCT        = 0.035      # [DATA-3] 5.0% → 3.5%: avg loss per SL -$0.97 terlalu besar.
+                               #          Dengan equity $316 dan RISK_PER_TRADE 1%, SL max 3.5%
+                               #          membatasi kerugian per trade lebih ketat.
+                               #          Setup dengan SL > 3.5% artinya noise terlalu besar — skip.
 
 INITIAL_EQUITY    = float(os.getenv("INITIAL_EQUITY_USDT", "").strip() or "350.0")
 RISK_PER_TRADE    = 0.01
@@ -153,10 +175,18 @@ STREAK_HALT       = 7
 
 SIGNAL_EXPIRE_HOURS = 18          # [v1.4] 36 → 18: lebih sesuai INTRADAY
 
-# ── ACTIVE_HOURS — 24 JAM MODE ───────────────────────────────────────────────
-# [v1.4] Bot berjalan 24 jam penuh — tidak ada jam aktif / jam tidur.
-# Crypto market tidak pernah tutup, jadi tidak perlu time-gate.
-# Gate waktu di run() sudah dihapus — bot selalu scan kapanpun dipanggil.
+# ── ACTIVE_HOURS — 24 JAM MODE dengan TIME FILTER ────────────────────────────
+# [DATA-4] Data 230 trades menunjukkan jam 00:00 WIB win rate hanya 29% (12 SL vs 5 TP2).
+# Jam 01:00 WIB: 4 SL vs 2 TP2 = 33%. Jam 11:00 WIB: 5 SL vs 1 TP1 = 17%.
+# Block jam 23:00-06:00 WIB (16:00-23:00 UTC) — liquidity rendah, spread lebar,
+# manipulasi lebih sering terjadi di luar jam Asia/Eropa/US overlap.
+# Override via env: BLOCK_HOURS_WIB="23,0,1,2,3,4,5,6" (format jam WIB dipisah koma)
+_default_block = "23,0,1,2,3,4,5,6"
+BLOCK_HOURS_WIB = set(
+    int(h.strip())
+    for h in os.getenv("BLOCK_HOURS_WIB", _default_block).split(",")
+    if h.strip().isdigit()
+)
 
 # ── Sell system toggle ────────────────────────────────────────────────────────
 # [FIX HIGH-3] SELL_ENABLED dipindahkan dari hardcoded False ke environment variable.
@@ -1334,7 +1364,8 @@ def check_intraday(client, pair: str, price: float,
     if wr_adj != 0:
         log(f"      {pair} WR={wr_pct:.0f}% (n={wr_trades}) → score adj {wr_adj:+.1f}")
 
-    # Adaptive threshold saat BTC bearish
+    # Adaptive threshold saat BTC bearish — naikkan bar saat trend tidak mendukung
+    # [DATA-1] Base MIN_SCORE=3.0; +0.3 untuk pair bermasalah; +0.5 saat BTC bearish 2+ cycle
     bearish_cycles = btc.get("btc_bearish_cycles", 0)
     adaptive_min   = MIN_SCORE + wr_adj + (0.5 if bearish_cycles >= 2 else 0.0)
     if score < adaptive_min:
@@ -1376,7 +1407,8 @@ def check_intraday(client, pair: str, price: float,
     if rr < MIN_RR:
         return None
 
-    tier = "A+" if score >= 3.8 else "A"  # score >= 3.5 baseline
+    # [DATA-1] Tier disesuaikan dengan MIN_SCORE=3.0
+    tier = "A+" if score >= 3.8 else "A" if score >= 3.5 else "B"  # B = 3.0–3.4
 
     return {
         "pair":          pair,
@@ -2054,6 +2086,26 @@ def run():
     log(f"⏰ Mode: 24 JAM ({SCAN_MODE.upper()}) | MIN_SCORE={MIN_SCORE} | MAX_OPEN={MAX_OPEN_TRADES}")
     log(f"{'='*55}")
 
+    # [DATA-4] Time filter — block jam dengan win rate buruk dari data historis
+    # Default: 23:00–06:00 WIB diblok (low liquidity, high manipulation risk)
+    now_wib_hour = datetime.now(WIB).hour
+    if now_wib_hour in BLOCK_HOURS_WIB and SCAN_MODE != "monitor":
+        log(f"⏸️  Jam {now_wib_hour:02d}:00 WIB termasuk BLOCK_HOURS — scan dilewati "
+            f"(data historis: WR rendah di jam ini)", "info")
+        tg_operator(
+            f"⏸️ <b>Scan dilewati — Low WR Hour</b>\n"
+            f"Jam {now_wib_hour:02d}:00 WIB masuk blok historis (WR &lt; 30%).\n"
+            f"<i>Bot akan aktif kembali pukul 07:00 WIB.</i>"
+        )
+        # Tetap jalankan lifecycle monitor meski scan diblok
+        # agar open trades tidak terbengkalai
+        client = gate_api.SpotApi(gate_api.ApiClient(
+            gate_api.Configuration(key=GATE_API_KEY, secret=GATE_SECRET_KEY)
+        ))
+        evaluate_open_trades(client)
+        save_equity_snapshot(open_trades=0)
+        return
+
     is_halted, halt_reason, persisted_streak = check_bot_halt()
     if is_halted:
         # [FIX HIGH-2] Auto-reset halt jika kondisi sudah membaik.
@@ -2467,9 +2519,9 @@ def _run_unit_tests() -> bool:
         rr_buy = (tp1 - entry_buy) / (entry_buy - sl) if (entry_buy - sl) > 0 else 0
         _assert(rr_buy > 0,      "BUY: RR harus positif", f"rr={rr_buy:.2f}")
 
-        # SL tidak boleh melewati batas MAX_SL_PCT
+        # SL tidak boleh melewati batas MAX_SL_PCT (sekarang 3.5%)
         sl_pct = (entry_buy - sl) / entry_buy
-        _assert(sl_pct <= MAX_SL_PCT, "BUY: SL tidak melebihi MAX_SL_PCT",
+        _assert(sl_pct <= MAX_SL_PCT, "BUY: SL tidak melebihi MAX_SL_PCT (3.5%)",
                 f"sl_pct={sl_pct:.3f} vs max={MAX_SL_PCT}")
         _assert(sl_pct >= MIN_SL_PCT, "BUY: SL tidak kurang dari MIN_SL_PCT",
                 f"sl_pct={sl_pct:.3f} vs min={MIN_SL_PCT}")
