@@ -1284,7 +1284,9 @@ def check_intraday(client, pair: str, price: float,
         return None
     if side == "BUY" and btc.get("block_buy"):
         return None
-    if side == "BUY" and btc.get("btc_bearish_trend"):
+    # btc_bearish_trend: skip di anomaly mode (F&G < threshold)
+    # Saat extreme fear, pair outperform justru sinyal kuat meski BTC bearish
+    if side == "BUY" and btc.get("btc_bearish_trend") and fg >= ANOMALY_FG_THRESHOLD:
         return None
 
     data = get_candles(client, pair, "1h", 150)  # [v1.4] 100 → 150: EMA lebih akurat
@@ -1323,7 +1325,7 @@ def check_intraday(client, pair: str, price: float,
     )
 
     if score < MIN_SCORE:
-        return None
+        return None   # score tidak cukup
 
     # Volume hard filter — wajib ada partisipasi market nyata
     avg_vol = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
@@ -1341,6 +1343,10 @@ def check_intraday(client, pair: str, price: float,
     if accu["accumulating"]:
         score = round(score + 0.3, 2)   # bonus akumulasi terdeteksi
         log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
+
+    # DEBUG anomaly — log pair yang sampai sini
+    if fg < ANOMALY_FG_THRESHOLD:
+        log(f"      {pair} — lolos pre-filter, masuk anomaly check (score={score:.1f})")
 
     # Multi-timeframe 4h confirmation [Feature 3]
     # Anomaly mode (F&G < 30): MTF 4h dilewati — fokus ke relative strength vs BTC
