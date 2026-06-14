@@ -213,7 +213,7 @@ JSONL_PATH            = "signals.jsonl"
 # - Volume minimum 2× rata-rata (lebih ketat dari normal 1.2×)
 # - Tujuan: temukan koin yang bergerak melawan arus = genuine momentum
 ANOMALY_FG_THRESHOLD = 30       # F&G di bawah ini → anomaly mode aktif
-ANOMALY_OUTPERFORM   = 0.03     # pair harus naik minimal 3% lebih dari BTC 1h
+ANOMALY_OUTPERFORM   = 0.015    # pair harus naik minimal 1.5% lebih dari BTC 1h
 ANOMALY_VOL_MULT     = 2.0      # volume minimum 2× rata-rata
 
 # ── SCAN_MODE ─────────────────────────────────────────────────────────────────
