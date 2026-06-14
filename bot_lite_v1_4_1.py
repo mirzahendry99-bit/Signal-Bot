@@ -1324,7 +1324,9 @@ def check_intraday(client, pair: str, price: float,
         mkt["regime"], btc.get("btc_4h", 0.0), fg
     )
 
-    if score < MIN_SCORE:
+    # Score threshold — lebih rendah di anomaly mode
+    min_score_eff = 2.5 if fg < ANOMALY_FG_THRESHOLD else MIN_SCORE
+    if score < min_score_eff:
         return None   # score tidak cukup
 
     # Volume hard filter — wajib ada partisipasi market nyata
