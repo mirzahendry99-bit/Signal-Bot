@@ -206,6 +206,16 @@ API_FAILURE_THRESHOLD = 5   # halt scan jika consecutive failure mencapai ini
 API_DECAY_ON_SUCCESS  = 1   # setiap success: kurangi counter 1 (tidak langsung 0)
 JSONL_PATH            = "signals.jsonl"
 
+# ── ANOMALY MODE — aktif saat F&G < 30 (Extreme Fear) ───────────────────────
+# Saat market Fear, bot switch ke mode anomaly:
+# - MTF 4h dilewati — koin bisa outperform meski BTC bearish di 4h
+# - Filter relative strength vs BTC: pair harus naik > 3% saat BTC flat/turun
+# - Volume minimum 2× rata-rata (lebih ketat dari normal 1.2×)
+# - Tujuan: temukan koin yang bergerak melawan arus = genuine momentum
+ANOMALY_FG_THRESHOLD = 30       # F&G di bawah ini → anomaly mode aktif
+ANOMALY_OUTPERFORM   = 0.03     # pair harus naik minimal 3% lebih dari BTC 1h
+ANOMALY_VOL_MULT     = 2.0      # volume minimum 2× rata-rata
+
 # ── SCAN_MODE ─────────────────────────────────────────────────────────────────
 # "full"    : evaluate open trades + scan pair baru (default, jalankan tiap jam)
 # "monitor" : hanya evaluate open trades — cepat, untuk cron 15/30 menit
@@ -1333,23 +1343,47 @@ def check_intraday(client, pair: str, price: float,
         log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
 
     # Multi-timeframe 4h confirmation [Feature 3]
-    # Fetch 4h hanya setelah score lolos — hemat API call
-    data_4h = get_candles(client, pair, "4h", 60)
-    if data_4h:
-        closes_4h, highs_4h, lows_4h, _ = data_4h
-        ema20_4h = calc_ema(closes_4h, 20)
-        ema50_4h = calc_ema(closes_4h, 50)
-        macd_4h, msig_4h = calc_macd(closes_4h)
+    # Anomaly mode (F&G < 30): MTF 4h dilewati — fokus ke relative strength vs BTC
+    anomaly_mode = fg < ANOMALY_FG_THRESHOLD
 
-        if side == "BUY":
-            # 4h harus bullish: EMA20 > EMA50 DAN MACD > signal
-            tf4_bullish = (ema20_4h > ema50_4h) and (macd_4h > msig_4h)
-            if not tf4_bullish:
-                return None   # 1h bullish tapi 4h tidak konfirmasi — skip
-        else:  # SELL
-            tf4_bearish = (ema20_4h < ema50_4h) and (macd_4h < msig_4h)
-            if not tf4_bearish:
-                return None
+    if anomaly_mode:
+        # Anomaly filter — pair harus outperform BTC
+        btc_1h_chg = btc.get("btc_1h", 0.0) / 100
+        closes_arr = closes
+        if len(closes_arr) >= 2:
+            pair_1h_chg = (closes_arr[-1] - closes_arr[-2]) / closes_arr[-2]
+        else:
+            pair_1h_chg = 0.0
+        relative_strength = pair_1h_chg - btc_1h_chg
+
+        # Pair harus naik lebih dari BTC minimal ANOMALY_OUTPERFORM
+        if side == "BUY" and relative_strength < ANOMALY_OUTPERFORM:
+            return None
+
+        # Volume lebih ketat saat anomaly — harus 2× bukan 1.2×
+        avg_vol_anom = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
+        if avg_vol_anom > 0 and volumes[-1] < avg_vol_anom * ANOMALY_VOL_MULT:
+            return None
+
+        log(f"      {pair} — 🔥 ANOMALY: RS={relative_strength*100:+.1f}% vs BTC {btc.get('btc_1h',0):+.1f}%")
+
+    else:
+        # Normal mode — MTF 4h wajib
+        data_4h = get_candles(client, pair, "4h", 60)
+        if data_4h:
+            closes_4h, highs_4h, lows_4h, _ = data_4h
+            ema20_4h = calc_ema(closes_4h, 20)
+            ema50_4h = calc_ema(closes_4h, 50)
+            macd_4h, msig_4h = calc_macd(closes_4h)
+
+            if side == "BUY":
+                tf4_bullish = (ema20_4h > ema50_4h) and (macd_4h > msig_4h)
+                if not tf4_bullish:
+                    return None
+            else:
+                tf4_bearish = (ema20_4h < ema50_4h) and (macd_4h < msig_4h)
+                if not tf4_bearish:
+                    return None
 
     # WR-based threshold per pair [Feature 1]
     wr_data   = get_pair_winrate(pair)
@@ -1429,6 +1463,7 @@ def check_intraday(client, pair: str, price: float,
         "accumulating":  accu.get("accumulating", False),
         "obv_slope":     accu.get("obv_slope", 0.0),
         "cmf":           accu.get("cmf", 0.0),
+        "anomaly_mode":  anomaly_mode,
     }
 
 # ════════════════════════════════════════════════════════
@@ -2005,6 +2040,7 @@ def send_signal(sig: dict, drawdown_mode: str = "normal",
         f"📈 {tier_medal} [{sig['tier']}] SIGNAL {side_icon} {sig['side']} — {sig['strategy']}\n"
     )
 
+    anomaly_str = "\n🔥 <b>ANOMALY MODE</b> — outperform BTC saat Fear" if sig.get("anomaly_mode") else ""
     tg_signal(
         header +
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -2024,7 +2060,8 @@ def send_signal(sig: dict, drawdown_mode: str = "normal",
         f"Conviction: {conviction}\n"
         f"Why:        {why_str}\n"
         + (f"🔍 Akumulasi: OBV {sig.get('obv_slope',0):+.2f} | CMF {sig.get('cmf',0):+.2f} ✅\n" if sig.get("accumulating") else "")
-        + f"💰 Pos.Size : ${size:.2f} USDT (tier-adjusted)\n"
+        + anomaly_str
+        + f"\n💰 Pos.Size : ${size:.2f} USDT (tier-adjusted)\n"
         f"⚠️ Pasang SL wajib. Ini signal, bukan rekomendasi finansial."
     )
     return True
@@ -2446,7 +2483,7 @@ def run():
         f"🔍 <b>Scan Selesai — SIGNAL BOT LITE v{BOT_VERSION}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Pairs scanned  : {len(all_pairs)}\n"
-        f"F&G            : {fg}\n"
+        f"F&G            : {fg} {'🔥 ANOMALY MODE' if fg < ANOMALY_FG_THRESHOLD else ''}\n"
         f"BTC 1h/4h      : {btc['btc_1h']:+.1f}% / {btc['btc_4h']:+.1f}% | Range:{btc['btc_1h_range']:.1f}%\n"
         f"API failures   : {_api_failures}\n"
         f"Sell mode      : {'ON' if SELL_ENABLED else 'OFF (disabled)'}\n"
