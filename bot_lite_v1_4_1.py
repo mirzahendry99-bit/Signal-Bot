@@ -1348,24 +1348,27 @@ def check_intraday(client, pair: str, price: float,
 
     if anomaly_mode:
         # Anomaly filter — pair harus outperform BTC
+        # Pakai perubahan harga 3 candle terakhir (3h) untuk lebih stabil dari 1 candle
         btc_1h_chg = btc.get("btc_1h", 0.0) / 100
         closes_arr = closes
-        if len(closes_arr) >= 2:
-            pair_1h_chg = (closes_arr[-1] - closes_arr[-2]) / closes_arr[-2]
+        if len(closes_arr) >= 4:
+            pair_3h_chg = (closes_arr[-1] - closes_arr[-4]) / closes_arr[-4]
+        elif len(closes_arr) >= 2:
+            pair_3h_chg = (closes_arr[-1] - closes_arr[-2]) / closes_arr[-2]
         else:
-            pair_1h_chg = 0.0
-        relative_strength = pair_1h_chg - btc_1h_chg
+            pair_3h_chg = 0.0
+        relative_strength = pair_3h_chg - (btc_1h_chg * 3)  # normalize BTC ke 3h
 
-        # Pair harus naik lebih dari BTC minimal ANOMALY_OUTPERFORM
+        # Pair harus outperform BTC minimal ANOMALY_OUTPERFORM
         if side == "BUY" and relative_strength < ANOMALY_OUTPERFORM:
             return None
 
-        # Volume lebih ketat saat anomaly — harus 2× bukan 1.2×
+        # Volume anomaly — pakai 1.5× (tidak seketat 2× sebelumnya)
         avg_vol_anom = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
-        if avg_vol_anom > 0 and volumes[-1] < avg_vol_anom * ANOMALY_VOL_MULT:
+        if avg_vol_anom > 0 and volumes[-1] < avg_vol_anom * 1.5:
             return None
 
-        log(f"      {pair} — 🔥 ANOMALY: RS={relative_strength*100:+.1f}% vs BTC {btc.get('btc_1h',0):+.1f}%")
+        log(f"      {pair} — 🔥 ANOMALY: RS={relative_strength*100:+.1f}% (3h) vs BTC {btc.get('btc_1h',0):+.1f}%")
 
     else:
         # Normal mode — MTF 4h wajib
