@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: signal-bot-lite
-  cancel-in-progress: true
+  cancel-in-progress: false   # ← DIUBAH: tunggu run selesai, jangan cancel
 
 jobs:
   run-bot:
@@ -43,8 +43,6 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run unit tests
-        # [FIX HIGH-4] Jalankan unit tests sebelum bot — gagal jika ada test yang pecah.
-        # Bot tidak akan jalan jika kalkulasi SL/TP/score ada regresi.
         env:
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
@@ -65,9 +63,6 @@ jobs:
           GATE_SECRET_KEY:      ${{ secrets.GATE_SECRET_KEY }}
           INITIAL_EQUITY_USDT:  ${{ secrets.INITIAL_EQUITY_USDT }}
           SCAN_MODE:            ${{ github.event.inputs.scan_mode || 'full' }}
-          # [FIX HIGH-3] SELL_ENABLED dari env var — bisa diubah tanpa edit kode.
-          # Set SELL_ENABLED=true di GitHub vars (bukan secrets) untuk aktifkan.
-          # Atau override via workflow_dispatch input di atas.
           SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
         run: |
           for i in 1 2 3; do
@@ -96,8 +91,6 @@ jobs:
           retention-days: 7
 
       - name: Upload halt_state.json
-        # [FIX MED-1] Upload halt_state.json sebagai artifact untuk debugging
-        # jika Supabase bot_config tidak terupdate dengan benar.
         if: always()
         uses: actions/upload-artifact@v4
         with:
