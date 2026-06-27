@@ -1,4 +1,4 @@
-name: Signal Bot Lite v1.4.1
+name: Signal Bot Lite v1.4.5
 
 on:
   schedule:
@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: signal-bot-lite
-  cancel-in-progress: false   # ← DIUBAH: tunggu run selesai, jangan cancel
+  cancel-in-progress: false   # tunggu run selesai, jangan cancel
 
 jobs:
   run-bot:
@@ -64,6 +64,8 @@ jobs:
           INITIAL_EQUITY_USDT:  ${{ secrets.INITIAL_EQUITY_USDT }}
           SCAN_MODE:            ${{ github.event.inputs.scan_mode || 'full' }}
           SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
+          TG_NOTIFY_LEVEL:      ${{ vars.TG_NOTIFY_LEVEL || 'signal' }}
+          BLOCK_HOURS_WIB:      ${{ vars.BLOCK_HOURS_WIB || '23,0,1,2,3,4,5,6,11,12,13,15,16,18' }}
         run: |
           for i in 1 2 3; do
             python bot_lite_v1_4_1.py && break
@@ -79,7 +81,7 @@ jobs:
         run: |
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
           -d chat_id="${CHAT_ID}" \
-          -d text="⚠️ GitHub Actions GAGAL — bot tidak jalan!"
+          -d text="⚠️ Signal Bot Lite v1.4.5 — GitHub Actions GAGAL. Cek Actions tab."
 
       - name: Upload signals.jsonl
         if: always()
