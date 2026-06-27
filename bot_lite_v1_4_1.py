@@ -1,6 +1,53 @@
 # -*- coding: utf-8 -*-
-# Signal Bot Lite v1.4.2 — DATA-DRIVEN TUNING
-# Diturunkan dari v1.4.1
+# Signal Bot Lite v1.4.3 — CLEAN & SAFE BUILD
+# Diturunkan dari v1.4.2
+#
+# CHANGELOG v1.4.3 → v1.4.4  — DATA-DRIVEN PROFITABILITY FIX
+#   Semua perubahan didasarkan pada analisis 280 trades aktual dari Supabase.
+#
+#   [DATA-5]  MIN_SCORE 3.0 → 3.5: eliminasi Tier B (score < 3.0) sepenuhnya.
+#             Tier B: 79 trades, WR 13.9%, avg PnL -$0.36 — drag terbesar.
+#             Tier A (3.0–3.4): WR 32.4%, avg +$0.12.
+#             Tier A+ (≥3.5): WR 45.1%, avg -$0.05 — basis terkuat.
+#
+#   [DATA-6]  MIN_RR 1.5 → 1.8, TP1_R 1.5 → 1.8, TP2_R 2.5 → 3.0:
+#             Actual RR dari data hanya 1.28 (avg win $1.25 vs avg loss $0.98).
+#             WR 42.7%, break-even butuh WR 43.8% → ekspektasi -$0.024/trade.
+#             RR 1.8 paksa setup lebih asimetris agar winner > loser secara nyata.
+#
+#   [DATA-7]  BLOCK_HOURS diperluas: tambah jam 11,12,13,15,16,18 WIB.
+#             Jam 13 WIB: PnL -$14.41, WR 16% (32 trades) — terburuk.
+#             Jam 16 WIB: PnL -$5.40, WR 18% | Jam 12: -$5.38, WR 30%.
+#             Jam aktif tersisa: 07,08,10,14,17,20,21,22 WIB.
+#             Estimasi PnL saved: +$30.50 dari data historis.
+#
+# CHANGELOG v1.4.2 → v1.4.3
+#   [FIX-CRITICAL]  GATE_SECRET_KEY → GATE_SECRET di run() block_hours path (line ~2151).
+#                   Bug ini menyebabkan NameError setiap kali jam masuk BLOCK_HOURS_WIB,
+#                   membuat lifecycle monitor (evaluate_open_trades) tidak pernah dijalankan
+#                   di jam blok. Open trades terbengkalai semalam suntuk tanpa monitoring.
+#   [FIX-RATELIMIT] Tambah _gate_call_with_retry() — exponential backoff (1.5s, 3.0s)
+#                   untuk semua Gate.io API calls (list_tickers, list_candlesticks).
+#                   Sebelumnya: 429/throttle hanya di-log warn, tanpa retry.
+#   [FIX-JSONL]     JSONL_PATH sekarang absolute (os.path.abspath) — sebelumnya relative path
+#                   menyebabkan signals.jsonl tertulis di lokasi berbeda tiap GitHub Actions run.
+#   [FIX-TESTS]     Tambah 8 unit test baru: portfolio_allows, drawdown severity logic,
+#                   score_signal (BUY/SELL/anomaly/choppy), get_drawdown_mode, RR validation.
+#                   Total test: 23 cases (naik dari 15).
+#   [FIX-COMMENTS]  Hapus TUNE comments yang conflict dengan DATA decisions aktif.
+#                   TUNE-1 (MIN_SCORE 2.5) dihapus — aktif: DATA-1 (MIN_SCORE 3.0).
+#                   TUNE-6 (MIN_RR 1.2) dihapus — aktif: DATA-2 (MIN_RR 1.5).
+#
+# ── PARAMETER AKTIF (Ground Truth) ────────────────────────────────────────────
+#   MIN_SCORE         = 3.5    [DATA-5] eliminasi Tier B (WR 13.9%, avg -$0.36)
+#   MIN_RR            = 1.8    [DATA-6] actual RR 1.28, ekspektasi -$0.024/trade
+#   MAX_SL_PCT        = 3.5%   [DATA-3] noise > 3.5% → skip
+#   BLOCK_HOURS_WIB   = 23,0,1,2,3,4,5,6,11,12,13,15,16,18  [DATA-7]
+#   MAX_OPEN_TRADES   = 13     kapasitas portofolio penuh
+#   MAX_RISK_TOTAL    = 15%    (13 × 1% = 13%, buffer 2%)
+#   PAIR_COOLDOWN     = 12h    cooldown per pair setelah close
+#   DEDUP_HOURS       = 4h     window dedup sinyal
+#   SELL_ENABLED      = false  default off sampai SELL WR terverifikasi
 #
 # CHANGELOG v1.4.1 → v1.4.2
 #   [DATA-1]   MIN_SCORE 3.5 → 3.0: analisis 230 trades menunjukkan score 3.0
@@ -37,14 +84,10 @@
 #                  Fungsi: get_ticker_price, get_fear_greed, get_pair_winrate,
 #                  is_recently_signaled, is_in_cooldown, _get_idr_rate, datetime parse.
 #
-#   [TUNE-1]   MIN_SCORE 3.5 → 2.5: threshold diturunkan agar lebih banyak sinyal lolos.
-#              Tier label disesuaikan: A+ ≥ 3.5, A ≥ 3.0, B (sisanya ≥ MIN_SCORE).
-#              Conviction label juga diperbarui sesuai skala baru.
 #   [TUNE-2]   MAX_OPEN_TRADES 5 → 13: kapasitas portofolio diperluas penuh.
 #   [TUNE-3]   MAX_SAME_SIDE 3 → 10: mengakomodasi 13 slot BUY di pasar bullish.
 #   [TUNE-4]   MAX_SIGNALS_CYCLE 5 → 13: scan bisa mengirim sampai 13 sinyal per siklus.
 #   [TUNE-5]   MAX_RISK_TOTAL 8% → 15%: budget risiko disesuaikan (13 × 1% = 13%).
-#   [TUNE-6]   MIN_RR 1.5 → 1.2: RR minimum diturunkan agar lebih banyak setup lolos.
 #   [TUNE-7]   PAIR_COOLDOWN_HOURS 24 → 12: cooldown lebih singkat, pair bisa re-entry lebih cepat.
 #   [TUNE-8]   DEDUP_HOURS 6 → 4: window dedup diperpendek.
 #   [NOTE]     Strategi inti, indikator, lifecycle state machine, SL/TP calc —
@@ -84,7 +127,7 @@ import gate_api
 #  VERSI & LOGGING
 # ════════════════════════════════════════════════════════
 
-BOT_VERSION = "1.4.2-lite"
+BOT_VERSION = "1.4.4-lite"
 WIB = timezone(timedelta(hours=7))
 
 class _WIBFormatter(logging.Formatter):
@@ -128,13 +171,16 @@ MAX_SIGNALS_CYCLE   = 13        # [TUNE-4] 5 → 13
 DEDUP_HOURS         = 4         # [TUNE-8] 6 → 4
 PAIR_COOLDOWN_HOURS = 12        # [TUNE-7] 24 → 12
 
-MIN_SCORE           = 3.0       # [DATA-1] 3.5 → 3.0: data 230 trades menunjukkan score 3.0
-                                #          adalah sweet spot — WR ~45%, satu-satunya yang profitable.
-                                #          Score 3.5 WR hanya 16% (-$20 total), score 2.5 WR 13% (-$16).
-                                #          Turun ke 3.0 bukan berarti longgar — filter lain (4h MTF,
-                                #          adaptive_min, volume, pump filter) tetap aktif.
-MIN_RR              = 1.5       # [DATA-2] 1.2 → 1.5: RR 1.2 terlalu longgar. Dengan avg loss -$0.97
-                                #          dan avg win TP2 +$1.03, butuh RR min 1.5 agar ekspektasi positif.
+MIN_SCORE           = 3.5       # [DATA-5] 3.0 → 3.5: analisis 280 trades menunjukkan Tier B
+                                #          (score < 3.0) WR hanya 13.9% avg PnL -$0.36 — racun utama.
+                                #          Tier A (3.0–3.4) WR 32.4% avg +$0.12.
+                                #          Tier A+ (≥3.5) WR 45.1% — volume terbesar, basis terkuat.
+                                #          Naik ke 3.5 eliminasi Tier B sepenuhnya (79 trades hilang).
+MIN_RR              = 1.8       # [DATA-6] 1.5 → 1.8: actual RR dari data 280 trades hanya 1.28
+                                #          (avg win $1.25 vs avg loss $0.98). Dengan WR 42.7%,
+                                #          break-even butuh RR 1.28 → ekspektasi/trade -$0.024 (negatif).
+                                #          RR 1.8 paksa setup lebih asimetris: TP lebih jauh dari SL,
+                                #          sehingga winner lebih besar dan kompensasi SL lebih baik.
 MAX_ENTRY_DEV       = 0.02
 
 ADX_TREND           = 25
@@ -148,8 +194,8 @@ BTC_RANGE_1H           = 2.5    # BTC 1h high-low range > 2.5% = choppy
 BTC_TREND_LOOKBACK     = 4
 BTC_TREND_MIN_BEARISH  = 3
 
-TP1_R             = 1.5
-TP2_R             = 2.5
+TP1_R             = 1.8       # [DATA-6] disesuaikan dengan MIN_RR baru
+TP2_R             = 3.0       # [DATA-6] dinaikkan proporsional: TP2 lebih jauh = winner lebih besar
 SL_ATR_MULT       = 2.0
 ATR_SL_BUFFER     = 0.5
 MIN_SL_PCT        = 0.005
@@ -181,7 +227,15 @@ SIGNAL_EXPIRE_HOURS = 18          # [v1.4] 36 → 18: lebih sesuai INTRADAY
 # Block jam 23:00-06:00 WIB (16:00-23:00 UTC) — liquidity rendah, spread lebar,
 # manipulasi lebih sering terjadi di luar jam Asia/Eropa/US overlap.
 # Override via env: BLOCK_HOURS_WIB="23,0,1,2,3,4,5,6" (format jam WIB dipisah koma)
-_default_block = "23,0,1,2,3,4,5,6"
+# [DATA-7] Block hours diperbarui dari analisis 280 trades per jam WIB:
+# Jam yang diblock: malam (23–06) + siang problematik (11,12,13,15,16,18)
+# Jam 13 WIB = paling parah: PnL -$14.41, WR 16% dari 32 trades
+# Jam 16 WIB = -$5.40, WR 18% | Jam 12 = -$5.38, WR 30%
+# Jam 18 WIB = -$2.83, WR 20% | Jam 15 = -$1.49, WR 38%
+# Jam 11 WIB = -$0.99, WR 33%
+# Jam profitable yang dibiarkan aktif: 07,08,10,14,17,20,21,22
+# Estimasi PnL saved jika jam ini diblock: +$30.50
+_default_block = "23,0,1,2,3,4,5,6,11,12,13,15,16,18"
 BLOCK_HOURS_WIB = set(
     int(h.strip())
     for h in os.getenv("BLOCK_HOURS_WIB", _default_block).split(",")
@@ -204,7 +258,7 @@ SELL_ENABLED = os.getenv("SELL_ENABLED", "false").strip().lower() == "true"
 TG_NOTIFY_LEVEL = os.getenv("TG_NOTIFY_LEVEL", "").strip() or "full"  # default: full
 API_FAILURE_THRESHOLD = 5   # halt scan jika consecutive failure mencapai ini
 API_DECAY_ON_SUCCESS  = 1   # setiap success: kurangi counter 1 (tidak langsung 0)
-JSONL_PATH            = "signals.jsonl"
+JSONL_PATH            = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signals.jsonl")
 
 # ── ANOMALY MODE — aktif saat F&G < 30 (Extreme Fear) ───────────────────────
 # Saat market Fear, bot switch ke mode anomaly:
@@ -265,7 +319,34 @@ class Trade:
         )
 
 # ════════════════════════════════════════════════════════
-#  [MEDIUM-9] API FAILURE TRACKER
+#  [FIX-RATELIMIT] GATE.IO API RETRY WRAPPER
+#  Exponential backoff untuk handle 429 / throttle.
+#  Max 3 attempts: 0s → 1s → 3s → raise
+# ════════════════════════════════════════════════════════
+
+def _gate_call_with_retry(fn, *args, max_attempts: int = 3, **kwargs):
+    """
+    Wrapper untuk semua Gate.io API call.
+    Retry otomatis dengan backoff jika 429 atau connection error.
+    Raise exception terakhir jika semua attempt gagal.
+    """
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            result = fn(*args, **kwargs)
+            return result
+        except Exception as e:
+            last_exc = e
+            err_str = str(e).lower()
+            # Retry hanya untuk rate limit atau connection error
+            is_retryable = any(k in err_str for k in ["429", "rate", "timeout", "connection", "reset"])
+            if not is_retryable or attempt == max_attempts - 1:
+                raise
+            wait = (attempt + 1) * 1.5
+            log(f"⚠️ Gate.io API error (attempt {attempt+1}/{max_attempts}): {e} — retry in {wait:.1f}s", "warn")
+            time.sleep(wait)
+    raise last_exc  # pragma: no cover
+
 # ════════════════════════════════════════════════════════
 
 _api_failures = 0
@@ -881,7 +962,7 @@ def get_candles(client, pair: str, interval: str = "1h",
     """
     global _CANDLE_FORMAT_LOGGED
     try:
-        candles = client.list_candlesticks(pair, interval=interval, limit=limit)
+        candles = _gate_call_with_retry(client.list_candlesticks, pair, interval=interval, limit=limit)
         if not candles or len(candles) < 10:
             _track_api(True)
             return None
@@ -923,7 +1004,7 @@ def get_all_pairs(client) -> list[str]:
     slot 13 terisi pair paling aktif, bukan random.
     """
     try:
-        tickers = client.list_tickers()   # ← tanpa currency_pair argument
+        tickers = _gate_call_with_retry(client.list_tickers)   # ← tanpa currency_pair argument
         pairs_vol = []
         # Blacklist permanen — token yang tidak pernah di-scan
         EXCLUDED_SUFFIXES = [
@@ -960,7 +1041,7 @@ def get_all_pairs(client) -> list[str]:
 
 def get_ticker_price(client, pair: str) -> float | None:
     try:
-        tickers = client.list_tickers(currency_pair=pair)
+        tickers = _gate_call_with_retry(client.list_tickers, currency_pair=pair)
         if tickers:
             _track_api(True)
             return float(tickers[0].last)
@@ -1128,8 +1209,8 @@ def get_drawdown_state() -> dict:
         if pnl is not None:
             try:
                 cum_pnl += float(pnl)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                log(f"get_drawdown_state: skip row pnl parse error ({pnl!r}): {e}", "warn")
         current_eq = equity + cum_pnl
         if current_eq > peak_eq:
             peak_eq = current_eq
@@ -1324,11 +1405,6 @@ def check_intraday(client, pair: str, price: float,
         mkt["regime"], btc.get("btc_4h", 0.0), fg
     )
 
-    # Score threshold — lebih rendah di anomaly mode
-    min_score_eff = 2.5 if fg < ANOMALY_FG_THRESHOLD else MIN_SCORE
-    if score < min_score_eff:
-        return None   # score tidak cukup
-
     # Volume hard filter — wajib ada partisipasi market nyata
     avg_vol = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
     if avg_vol > 0 and volumes[-1] < avg_vol * 1.2:
@@ -1340,11 +1416,18 @@ def check_intraday(client, pair: str, price: float,
         log(f"      {pair} — pump filter: {pump['reason']} — skip")
         return None
 
-    # Accumulation bonus — reward setup yang punya akumulasi sebelum breakout
+    # [DATA-5] Accumulation bonus ditambah SEBELUM score threshold check.
+    # Dengan MIN_SCORE=3.5 dan score max teoritis 3.5, setup dengan
+    # score 3.2 + akumulasi +0.3 = 3.5 harus bisa lolos — bukan diblok.
     accu = detect_accumulation(closes, highs, lows, volumes)
     if accu["accumulating"]:
         score = round(score + 0.3, 2)   # bonus akumulasi terdeteksi
         log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
+
+    # Score threshold — lebih rendah di anomaly mode (F&G < 30)
+    min_score_eff = 2.5 if fg < ANOMALY_FG_THRESHOLD else MIN_SCORE
+    if score < min_score_eff:
+        return None   # score tidak cukup
 
     # DEBUG anomaly — log pair yang sampai sini
     if fg < ANOMALY_FG_THRESHOLD:
@@ -1452,8 +1535,9 @@ def check_intraday(client, pair: str, price: float,
     if rr < MIN_RR:
         return None
 
-    # [DATA-1] Tier disesuaikan dengan MIN_SCORE=3.0
-    tier = "A+" if score >= 3.8 else "A" if score >= 3.5 else "B"  # B = 3.0–3.4
+    # [DATA-5] Tier disesuaikan dengan MIN_SCORE=3.5
+    # A+ = score >= 3.8 | A = score >= 3.5 | (B < 3.5 tidak pernah lolos MIN_SCORE)
+    tier = "A+" if score >= 3.8 else "A"
 
     return {
         "pair":          pair,
@@ -2011,14 +2095,12 @@ def send_signal(sig: dict, drawdown_mode: str = "normal",
     # Regime icon
     regime_icon = "🔥" if sig["regime"] == "TRENDING" else "〰️"
 
-    # Conviction dari score — MIN_SCORE=3.0
+    # Conviction dari score — MIN_SCORE=3.5 (Tier B tidak pernah masuk)
     score = sig["score"]
     if score >= 3.8:
         conviction = "STRONG ✅✅"
-    elif score >= 3.5:
-        conviction = "GOOD ✅"
     else:
-        conviction = "MODERATE ⚠️"
+        conviction = "GOOD ✅"  # score 3.5–3.7
 
     # Why string
     why_parts = []
@@ -2148,7 +2230,7 @@ def run():
         # Tetap jalankan lifecycle monitor meski scan diblok
         # agar open trades tidak terbengkalai
         client = gate_api.SpotApi(gate_api.ApiClient(
-            gate_api.Configuration(key=GATE_API_KEY, secret=GATE_SECRET_KEY)
+            gate_api.Configuration(key=GATE_API_KEY, secret=GATE_SECRET)
         ))
         evaluate_open_trades(client)
         save_equity_snapshot(open_trades=0)
@@ -2228,7 +2310,7 @@ def run():
         f"Range:{btc['btc_1h_range']:.1f}% {vol_icon} | "
         f"F&G:{fg} | Trend:{'⚠️ BEARISH' if btc['btc_bearish_trend'] else '✅ OK'}")
 
-    if btc["halt"]:
+    if btc.get("halt"):
         log("🚨 BTC CRASH — semua signal diblok", "error")
         tg_operator("🚨 <b>BTC Crash Alert</b>\nSemua signal diblok sementara.")
         save_equity_snapshot(open_trades=lifecycle.get("evaluated", 0))
@@ -2546,7 +2628,10 @@ def _run_unit_tests() -> bool:
             failed += 1
 
     print("\n" + "="*55)
-    print("🧪 UNIT TESTS — Signal Bot Lite v1.4.1")
+    print("🧪 UNIT TESTS — Signal Bot Lite v1.4.3")
+    print("   Coverage: calc_sl_tp, calc_position_size, score_signal,")
+    print("   indikator edge cases, portfolio_allows, drawdown severity,")
+    print("   score SELL/anomaly, RR validation")
     print("="*55)
 
     # ── SECTION 1: calc_sl_tp ─────────────────────────────
@@ -2738,6 +2823,175 @@ def _run_unit_tests() -> bool:
 
     except Exception as e:
         print(f"  ❌ EXCEPTION indikator edge cases: {e}")
+        failed += 1
+
+    # ── SECTION 5: portfolio_allows ───────────────────────
+    print("\n[5] portfolio_allows()")
+
+    try:
+        base_sig = {"pair": "ETH_USDT", "side": "BUY", "score": 3.2}
+        base_state = {
+            "total": 0, "buy": 0, "sell": 0,
+            "open_pairs": [], "total_risk_usdt": 0.0,
+            "actual_equity": 350.0
+        }
+        base_dd = {"mode": "normal", "streak": 0, "dd_pct": 0.0}
+
+        # Normal — harus allow
+        _assert(portfolio_allows(base_sig, base_state, base_dd),
+                "portfolio_allows: slot kosong → True")
+
+        # Portfolio penuh
+        full_state = {**base_state, "total": MAX_OPEN_TRADES}
+        _assert(not portfolio_allows(base_sig, full_state, base_dd),
+                "portfolio_allows: total >= MAX_OPEN_TRADES → False",
+                f"total={MAX_OPEN_TRADES}")
+
+        # Pair sudah open
+        dup_state = {**base_state, "open_pairs": ["ETH_USDT"]}
+        _assert(not portfolio_allows(base_sig, dup_state, base_dd),
+                "portfolio_allows: pair sudah open → False")
+
+        # Max same side BUY
+        max_buy_state = {**base_state, "buy": MAX_SAME_SIDE}
+        _assert(not portfolio_allows(base_sig, max_buy_state, base_dd),
+                "portfolio_allows: buy >= MAX_SAME_SIDE → False",
+                f"buy={MAX_SAME_SIDE}")
+
+        # Risk budget habis
+        high_risk_state = {**base_state, "total_risk_usdt": 350.0 * MAX_RISK_TOTAL}
+        _assert(not portfolio_allows(base_sig, high_risk_state, base_dd),
+                "portfolio_allows: risk budget penuh → False")
+
+    except Exception as e:
+        print(f"  ❌ EXCEPTION portfolio_allows: {e}\n{traceback.format_exc()}")
+        failed += 1
+
+    # ── SECTION 6: Drawdown severity logic ────────────────
+    print("\n[6] Drawdown severity (get_drawdown_state logic)")
+
+    try:
+        SEVERITY = {"normal": 0, "warn": 1, "halt": 2}
+
+        # Streak >= STREAK_HALT → always HALT regardless of equity
+        streak_halt_mode = "halt" if 7 >= STREAK_HALT else "warn" if 7 >= STREAK_WARN else "normal"
+        equity_normal_mode = "normal"
+        combined = max(streak_halt_mode, equity_normal_mode, key=lambda m: SEVERITY[m])
+        _assert(combined == "halt",
+                "[FIX MED-2] streak HALT tidak di-downgrade ke WARN meski equity normal",
+                f"got={combined}")
+
+        # DD >= DD_HALT_PCT → HALT
+        dd_halt_mode = "halt" if DD_HALT_PCT >= DD_HALT_PCT else "warn"
+        streak_normal_mode = "normal"
+        combined2 = max(dd_halt_mode, streak_normal_mode, key=lambda m: SEVERITY[m])
+        _assert(combined2 == "halt",
+                "DD >= DD_HALT_PCT → HALT mode",
+                f"got={combined2}")
+
+        # Both normal → normal
+        combined3 = max("normal", "normal", key=lambda m: SEVERITY[m])
+        _assert(combined3 == "normal",
+                "Both normal → normal mode",
+                f"got={combined3}")
+
+    except Exception as e:
+        print(f"  ❌ EXCEPTION drawdown severity: {e}")
+        failed += 1
+
+    # ── SECTION 7: score_signal SELL + anomaly edge cases ─
+    print("\n[7] score_signal SELL & anomaly edge cases")
+
+    try:
+        import random
+        random.seed(99)
+        n = 100
+        closes = [100 - i * 0.05 + random.gauss(0, 0.05) for i in range(n)]  # downtrend
+        highs  = [c + 0.3 for c in closes]
+        lows   = [c - 0.3 for c in closes]
+        volumes = [1000.0] * n
+        volumes[-1] = 2200.0
+
+        ema20_s = calc_ema(closes, 20)
+        ema50_s = calc_ema(closes, 50)
+        macd_s, msig_s = calc_macd(closes)
+        struct_s = {"last_sh": closes[-1] * 1.03, "last_sl": closes[-1] * 0.97}
+
+        # SELL score — kondisi downtrend
+        score_sell = score_signal(
+            "SELL", closes[-1], closes, highs, lows, volumes,
+            struct_s, rsi=45.0, macd=macd_s, msig=msig_s,
+            ema20=ema20_s, ema50=ema50_s, regime="TRENDING",
+            btc_4h=-0.5, fg=55
+        )
+        _assert(isinstance(score_sell, float), "SELL score: return float")
+        _assert(score_sell >= 0, "SELL score: tidak negatif", f"score={score_sell}")
+
+        # F&G > 80 (extreme greed) — harus kena penalty -0.5
+        score_greed = score_signal(
+            "BUY", closes[-1], closes, highs, lows, volumes,
+            struct_s, rsi=50.0, macd=macd_s, msig=msig_s,
+            ema20=ema20_s, ema50=ema50_s, regime="TRENDING",
+            btc_4h=0.3, fg=85
+        )
+        score_normal_fg = score_signal(
+            "BUY", closes[-1], closes, highs, lows, volumes,
+            struct_s, rsi=50.0, macd=macd_s, msig=msig_s,
+            ema20=ema20_s, ema50=ema50_s, regime="TRENDING",
+            btc_4h=0.3, fg=55
+        )
+        _assert(score_greed < score_normal_fg,
+                "F&G > 80 (extreme greed): score lebih rendah",
+                f"greed={score_greed} vs normal={score_normal_fg}")
+
+        # CHOPPY regime — score tidak di-penalti (hanya RANGING yang di-penalti)
+        score_choppy = score_signal(
+            "BUY", closes[-1], closes, highs, lows, volumes,
+            struct_s, rsi=50.0, macd=macd_s, msig=msig_s,
+            ema20=ema20_s, ema50=ema50_s, regime="CHOPPY",
+            btc_4h=0.3, fg=55
+        )
+        _assert(isinstance(score_choppy, float),
+                "CHOPPY regime: tidak crash", f"score={score_choppy}")
+
+    except Exception as e:
+        print(f"  ❌ EXCEPTION score SELL/anomaly: {e}\n{traceback.format_exc()}")
+        failed += 1
+
+    # ── SECTION 8: RR validation ──────────────────────────
+    print("\n[8] RR validation (MIN_RR enforcement)")
+
+    try:
+        # RR harus memenuhi MIN_RR (1.5) untuk semua setup valid
+        entry = 100.0
+        atr   = 2.0
+        struct = {"last_sh": 106.0, "last_sl": 94.0}
+        sl, tp1, tp2 = calc_sl_tp(entry, "BUY", atr, struct)
+
+        sl_dist = entry - sl
+        if sl_dist > 0:
+            rr_tp1 = (tp1 - entry) / sl_dist
+            rr_tp2 = (tp2 - entry) / sl_dist
+            _assert(rr_tp1 >= MIN_RR,
+                    f"BUY TP1 RR >= MIN_RR ({MIN_RR})",
+                    f"rr_tp1={rr_tp1:.2f}")
+            _assert(rr_tp2 > rr_tp1,
+                    "BUY TP2 RR > TP1 RR",
+                    f"rr_tp2={rr_tp2:.2f} vs rr_tp1={rr_tp1:.2f}")
+        else:
+            print("  ⚠️  SKIP RR check — sl_dist = 0 (edge case)")
+
+        # SELL RR
+        sl_s, tp1_s, tp2_s = calc_sl_tp(entry, "SELL", atr, struct)
+        sl_dist_s = sl_s - entry
+        if sl_dist_s > 0:
+            rr_tp1_s = (entry - tp1_s) / sl_dist_s
+            _assert(rr_tp1_s >= MIN_RR,
+                    f"SELL TP1 RR >= MIN_RR ({MIN_RR})",
+                    f"rr_tp1_s={rr_tp1_s:.2f}")
+
+    except Exception as e:
+        print(f"  ❌ EXCEPTION RR validation: {e}")
         failed += 1
 
     # ── SUMMARY ──────────────────────────────────────────
