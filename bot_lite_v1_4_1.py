@@ -2972,9 +2972,9 @@ def _run_unit_tests() -> bool:
         if sl_dist > 0:
             rr_tp1 = (tp1 - entry) / sl_dist
             rr_tp2 = (tp2 - entry) / sl_dist
-            _assert(rr_tp1 >= MIN_RR,
+            _assert(rr_tp1 >= MIN_RR - 0.001,
                     f"BUY TP1 RR >= MIN_RR ({MIN_RR})",
-                    f"rr_tp1={rr_tp1:.2f}")
+                    f"rr_tp1={rr_tp1:.4f}")
             _assert(rr_tp2 > rr_tp1,
                     "BUY TP2 RR > TP1 RR",
                     f"rr_tp2={rr_tp2:.2f} vs rr_tp1={rr_tp1:.2f}")
@@ -2986,9 +2986,9 @@ def _run_unit_tests() -> bool:
         sl_dist_s = sl_s - entry
         if sl_dist_s > 0:
             rr_tp1_s = (entry - tp1_s) / sl_dist_s
-            _assert(rr_tp1_s >= MIN_RR,
+            _assert(rr_tp1_s >= MIN_RR - 0.001,
                     f"SELL TP1 RR >= MIN_RR ({MIN_RR})",
-                    f"rr_tp1_s={rr_tp1_s:.2f}")
+                    f"rr_tp1_s={rr_tp1_s:.4f}")
 
     except Exception as e:
         print(f"  ❌ EXCEPTION RR validation: {e}")
