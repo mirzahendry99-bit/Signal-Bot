@@ -127,7 +127,7 @@ import gate_api
 #  VERSI & LOGGING
 # ════════════════════════════════════════════════════════
 
-BOT_VERSION = "1.4.4-lite"
+BOT_VERSION = "1.4.5-lite"
 WIB = timezone(timedelta(hours=7))
 
 class _WIBFormatter(logging.Formatter):
@@ -1842,15 +1842,19 @@ def evaluate_open_trades(client) -> dict:
                           else (trade.entry - trade.tp1) / trade.entry * 100
                 realized_pnl = (abs(trade.tp1 - trade.entry) / trade.entry) * (trade.size * 0.5)
 
+                _idr_tp1 = _get_idr_rate()
+                idr_pnl_tp1 = f" / Rp{realized_pnl * _idr_tp1:,.0f}" if _idr_tp1 > 0 else ""
+                idr_tp2_str = f" / Rp{trade.tp2 * _idr_tp1:,.0f}" if _idr_tp1 > 0 else ""
                 tg_signal(
-                    f"🎯 <b>Partial Profit Taken — {trade.pair}</b>\n"
-                    f"TP1 tercapai {tp1_pct:+.1f}% ✅\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"• 50% posisi ditutup (adaptive RR={trade.score:.1f})\n"
-                    f"• Realized: <b>+{realized_pnl:.2f} USDT</b>\n"
-                    f"• SL digeser ke entry (breakeven)\n"
-                    f"• 🔒 Trailing SL aktif — SL naik otomatis mengikuti harga\n"
-                    f"• Menunggu TP2 untuk sisa posisi..."
+                    f"🎯 <b>TP1 HIT — {trade.pair}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Entry  : {_fmt_price_signal(trade.entry)}\n"
+                    f"TP1    : {_fmt_price_signal(trade.tp1)} ✅ ({tp1_pct:+.1f}%)\n"
+                    f"PnL    : <b>+{realized_pnl:.2f} USDT{idr_pnl_tp1}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📌 SL dipindah ke entry (breakeven)\n"
+                    f"🔒 Trailing SL aktif\n"
+                    f"🎯 Menunggu TP2 {_fmt_price_signal(trade.tp2)}{idr_tp2_str}..."
                 )
                 append_jsonl({
                     "event": "TP1_HIT", "pair": trade.pair, "side": trade.side,
@@ -1899,27 +1903,34 @@ def _close_trade(trade: Trade, result: str, pnl: float | None) -> None:
         if result == "TP2":
             tp2_pct = (abs(trade.tp2 - trade.entry) / trade.entry * 100) if trade.entry > 0 else 0
             msg = (
-                f"✅✅ <b>Full Target Reached — {trade.pair}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Strategy : {strat_label}\n"
-                f"PnL      : <b>+{abs(pnl):.2f} USDT{_idr_str(pnl)}</b>\n"
-                f"TP2 tercapai {tp2_pct:+.1f}% — target penuh tercapai 🎯"
+                f"✅✅ <b>TP2 HIT — {trade.pair}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Entry  : {_fmt_price_signal(trade.entry)}\n"
+                f"TP2    : {_fmt_price_signal(trade.tp2)} ✅ ({tp2_pct:+.1f}%)\n"
+                f"PnL    : <b>+{abs(pnl):.2f} USDT{_idr_str(pnl)}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 Target penuh tercapai!"
             )
         elif result == "SL_AFTER_TP1":
             msg = (
-                f"🔄 <b>Closed at Breakeven — {trade.pair}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Strategy : {strat_label}\n"
-                f"PnL      : <b>{pnl_str}{_idr_str(pnl)}</b>\n"
-                f"SL breakeven tercapai — TP1 profit tetap terkunci"
+                f"🔄 <b>Breakeven — {trade.pair}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Entry  : {_fmt_price_signal(trade.entry)}\n"
+                f"SL     : {_fmt_price_signal(trade.entry)} (breakeven)\n"
+                f"PnL    : <b>{pnl_str}{_idr_str(pnl)}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"TP1 profit terkunci ✅ Modal aman."
             )
         elif result == "SL":
+            sl_pct_close = (abs(trade.sl - trade.entry) / trade.entry * 100) if trade.entry > 0 else 0
             msg = (
                 f"❌ <b>Stop Loss — {trade.pair}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Strategy : {strat_label}\n"
-                f"PnL      : <b>{pnl_str}{_idr_str(pnl)}</b>\n"
-                f"SL tersentuh — loss terkontrol"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Entry  : {_fmt_price_signal(trade.entry)}\n"
+                f"SL     : {_fmt_price_signal(trade.sl)} (-{sl_pct_close:.1f}%)\n"
+                f"PnL    : <b>{pnl_str}{_idr_str(pnl)}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Loss terkontrol ✅"
             )
         else:
             msg = (
@@ -2133,29 +2144,29 @@ def send_signal(sig: dict, drawdown_mode: str = "normal",
         f"📈 {tier_medal} [{sig['tier']}] SIGNAL {side_icon} {sig['side']} — {sig['strategy']}\n"
     )
 
-    anomaly_str = "\n🔥 <b>ANOMALY MODE</b> — outperform BTC saat Fear" if sig.get("anomaly_mode") else ""
+    anomaly_str = "\n🔥 <b>ANOMALY MODE</b> — Outperform BTC saat Fear" if sig.get("anomaly_mode") else ""
+    accu_str    = f"\n🔍 Akumulasi: OBV {sig.get('obv_slope',0):+.2f} | CMF {sig.get('cmf',0):+.2f} ✅" if sig.get("accumulating") else ""
+    size_idr    = f" / Rp{size * idr:,.0f}" if idr > 0 else ""
+
     tg_signal(
-        header +
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Pair:    {sig['pair']} [{sig['timeframe']}]\n"
-        f"⏰ Valid: {valid_from} → {valid_until} WIB\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Entry Zone : {_fmt_price_signal(entry)}{_fmt_idr_signal(entry, idr)} (limit / retest BOS)\n"
-        f"TP1  : {_fmt_price_signal(tp1)}{_fmt_idr_signal(tp1, idr)} ({tp1_pct:+.1f}%)\n"
-        f"TP2  : {_fmt_price_signal(tp2)}{_fmt_idr_signal(tp2, idr)} ({tp2_pct:+.1f}%)\n"
-        f"SL   : {_fmt_price_signal(sl)}{_fmt_idr_signal(sl, idr)} ({sl_pct:+.1f}%)\n"
-        f"R/R  : 1:{sig['rr']}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Score:      {score:.1f}/4 | RSI: {sig['rsi']}\n"
-        f"Struct:     {struct_label}\n"
-        f"Regime:     {regime_icon} {sig['regime']} (ADX: {sig['adx']})\n"
-        f"Hist WR:    {hist_wr['icon']} {hist_wr['label']}\n"
-        f"Conviction: {conviction}\n"
-        f"Why:        {why_str}\n"
-        + (f"🔍 Akumulasi: OBV {sig.get('obv_slope',0):+.2f} | CMF {sig.get('cmf',0):+.2f} ✅\n" if sig.get("accumulating") else "")
-        + anomaly_str
-        + f"\n💰 Pos.Size : ${size:.2f} USDT (tier-adjusted)\n"
-        f"⚠️ Pasang SL wajib. Ini signal, bukan rekomendasi finansial."
+        f"{header}"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Score   : {score:.2f} {conviction}\n"
+        f"📈 Regime  : {regime_icon} {sig['regime']} (ADX: {sig['adx']})\n"
+        f"💡 Why     : {why_str}\n"
+        f"📉 Hist WR : {hist_wr['icon']} {hist_wr['label']}\n"
+        + (accu_str + "\n" if accu_str else "")
+        + (anomaly_str + "\n" if anomaly_str else "")
+        + f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Entry   : {_fmt_price_signal(entry)} / Rp{entry * idr:,.0f}\n"
+        f"🎯 TP1     : {_fmt_price_signal(tp1)} / Rp{tp1 * idr:,.0f} ({tp1_pct:+.1f}%)\n"
+        f"🎯 TP2     : {_fmt_price_signal(tp2)} / Rp{tp2 * idr:,.0f} ({tp2_pct:+.1f}%)\n"
+        f"🛡️ SL      : {_fmt_price_signal(sl)} / Rp{sl * idr:,.0f} ({sl_pct:+.1f}%)\n"
+        f"⚖️ RR      : 1:{sig['rr']}\n"
+        f"💼 Size    : ${size:.2f}{size_idr}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⏰ Valid   : {valid_from} → {valid_until} WIB\n"
+        f"⚠️ Pasang SL wajib. Bukan rekomendasi finansial."
     )
     return True
 
@@ -2192,16 +2203,23 @@ def save_equity_snapshot(open_trades: int = 0) -> None:
             "snapshot_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
 
-        tg_close(
-            f"📊 <b>Equity Report</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Equity   : <b>${equity:.2f} USDT</b>\n"
-            f"PnL      : {cum_pnl:+.2f} USDT\n"
-            f"DD       : {dd['dd_pct']*100:.1f}% dari peak\n"
-            f"WR       : {wr:.1f}% ({wins}W / {losses}L)\n"
-            f"Open     : {open_trades} trades\n"
-            f"<i>Snapshot: {datetime.now(WIB).strftime('%Y-%m-%d %H:%M WIB')}</i>"
-        )
+        # Kirim daily report hanya jam 22 WIB, atau jika ada parameter force
+        _now_h = datetime.now(WIB).hour
+        if _now_h == 22:
+            _idr_eq = _get_idr_rate()
+            eq_idr  = f" / Rp{equity * _idr_eq:,.0f}" if _idr_eq > 0 else ""
+            pnl_idr = f" / Rp{abs(cum_pnl) * _idr_eq:,.0f}" if _idr_eq > 0 else ""
+            pnl_sign = "+" if cum_pnl >= 0 else "-"
+            tg_close(
+                f"📊 <b>Daily Report — {datetime.now(WIB).strftime('%d %b %Y')}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💰 Equity  : <b>${equity:.2f}{eq_idr}</b>\n"
+                f"📈 PnL     : {pnl_sign}${abs(cum_pnl):.2f}{pnl_idr}\n"
+                f"📉 DD      : {dd['dd_pct']*100:.1f}% dari peak\n"
+                f"🎯 WR      : {wr:.1f}% ({wins}W / {losses}L)\n"
+                f"📂 Open    : {open_trades} trades\n"
+                f"<i>{datetime.now(WIB).strftime('%H:%M WIB')}</i>"
+            )
     except Exception as e:
         log(f"Equity snapshot error: {e}", "warn")
 
@@ -2222,11 +2240,8 @@ def run():
     if now_wib_hour in BLOCK_HOURS_WIB and SCAN_MODE != "monitor":
         log(f"⏸️  Jam {now_wib_hour:02d}:00 WIB termasuk BLOCK_HOURS — scan dilewati "
             f"(data historis: WR rendah di jam ini)", "info")
-        tg_operator(
-            f"⏸️ <b>Scan dilewati — Low WR Hour</b>\n"
-            f"Jam {now_wib_hour:02d}:00 WIB masuk blok historis (WR &lt; 30%).\n"
-            f"<i>Bot akan aktif kembali pukul 07:00 WIB.</i>"
-        )
+        # Low WR Hour — tidak dikirim ke Telegram, hanya di-log
+        # (menghilangkan spam notif di jam-jam blocked)
         # Tetap jalankan lifecycle monitor meski scan diblok
         # agar open trades tidak terbengkalai
         client = gate_api.SpotApi(gate_api.ApiClient(
@@ -2353,13 +2368,32 @@ def run():
         save_equity_snapshot()
         return
 
-    if dd_mode == "warn":
-        tg_operator(
-            f"⚠️ <b>Drawdown Warning</b>\n"
-            f"Streak : {drawdown['streak']} loss berturutan\n"
-            f"DD     : {drawdown['dd_pct']*100:.1f}% dari peak\n"
-            f"<i>Position size dikurangi 30%.</i>"
-        )
+    # Drawdown Warning — kirim hanya saat streak BARU mencapai threshold
+    # Cegah spam tiap run dengan cek apakah streak sudah pernah dikirim
+    if dd_mode in ("warn", "halt"):
+        _last_notif_streak = int(_read_config("last_dd_notif_streak", 0) or 0)
+        _cur_streak = drawdown["streak"]
+        if _cur_streak > _last_notif_streak:
+            _write_config("last_dd_notif_streak", _cur_streak)
+            if dd_mode == "halt":
+                tg_operator(
+                    f"🛑 <b>Drawdown HALT</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Streak : {_cur_streak} loss berturutan\n"
+                    f"DD     : {drawdown['dd_pct']*100:.1f}% dari peak\n"
+                    f"<i>Bot berhenti entry posisi baru.</i>"
+                )
+            else:
+                tg_operator(
+                    f"⚠️ <b>Drawdown Warning</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Streak : {_cur_streak} loss berturutan\n"
+                    f"DD     : {drawdown['dd_pct']*100:.1f}% dari peak\n"
+                    f"<i>Position size dikurangi 30%.</i>"
+                )
+        elif _cur_streak < _last_notif_streak:
+            # Streak membaik — reset counter notif
+            _write_config("last_dd_notif_streak", _cur_streak)
 
     portfolio = get_portfolio_state(actual_equity=actual_equity)
     log(f"🧠 Portfolio: {portfolio['total']}/{MAX_OPEN_TRADES} open "
