@@ -127,7 +127,7 @@ import gate_api
 #  VERSI & LOGGING
 # ════════════════════════════════════════════════════════
 
-BOT_VERSION = "1.4.5-lite"
+BOT_VERSION = "1.4.6-lite"
 WIB = timezone(timedelta(hours=7))
 
 class _WIBFormatter(logging.Formatter):
@@ -1427,6 +1427,7 @@ def check_intraday(client, pair: str, price: float,
     # Score threshold — lebih rendah di anomaly mode (F&G < 30)
     min_score_eff = 2.5 if fg < ANOMALY_FG_THRESHOLD else MIN_SCORE
     if score < min_score_eff:
+        log(f"      {pair} — score {score:.2f} < {min_score_eff:.1f} (min) — skip")
         return None   # score tidak cukup
 
     # DEBUG anomaly — log pair yang sampai sini
@@ -1533,6 +1534,7 @@ def check_intraday(client, pair: str, price: float,
 
     rr = abs(tp1 - entry) / sl_dist
     if rr < MIN_RR:
+        log(f"      {pair} — RR {rr:.2f} < MIN_RR {MIN_RR} — skip")
         return None
 
     # [DATA-5] Tier disesuaikan dengan MIN_SCORE=3.5
@@ -2203,9 +2205,13 @@ def save_equity_snapshot(open_trades: int = 0) -> None:
             "snapshot_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
 
-        # Kirim daily report hanya jam 22 WIB, atau jika ada parameter force
-        _now_h = datetime.now(WIB).hour
-        if _now_h == 22:
+        # Kirim daily report hanya jam 22 WIB, 1x per hari
+        _now_wib_dt = datetime.now(WIB)
+        _now_h = _now_wib_dt.hour
+        _today_str = _now_wib_dt.strftime("%Y-%m-%d")
+        _last_daily = _read_config("last_daily_report_date", "") or ""
+        if _now_h == 22 and _last_daily != _today_str:
+            _write_config("last_daily_report_date", _today_str)
             _idr_eq = _get_idr_rate()
             eq_idr  = f" / Rp{equity * _idr_eq:,.0f}" if _idr_eq > 0 else ""
             pnl_idr = f" / Rp{abs(cum_pnl) * _idr_eq:,.0f}" if _idr_eq > 0 else ""
@@ -2595,9 +2601,10 @@ def run():
         header = f"📂 <b>Open Trades ({len(open_rows)}/{MAX_OPEN_TRADES})</b>\n{'━'*22}\n"
         return header + "\n\n".join(lines)
 
-    # ── Kirim pesan open trades terpisah ────────────────────
+    # ── Kirim pesan open trades — HANYA jika ada posisi terbuka ───
     open_trades_msg = build_open_trades_msg(client)
-    tg(open_trades_msg)   # selalu kirim di semua level
+    if portfolio["total"] > 0:
+        tg_signal(open_trades_msg)   # hanya kirim jika ada open trade
 
     # ── Scan summary (dengan ringkasan open trades) ──────────
     open_summary = (
