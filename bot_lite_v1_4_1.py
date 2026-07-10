@@ -2,6 +2,44 @@
 # Signal Bot Lite v1.4.3 — CLEAN & SAFE BUILD
 # Diturunkan dari v1.4.2
 #
+# CHANGELOG v1.4.8 → v1.4.9  — DECOUPLED MARKET MODE
+#   Perombakan besar berdasarkan observasi: altcoin pump independen dari
+#   BTC dan F&G di kondisi market saat ini. Semua guard berbasis BTC/F&G
+#   dinonaktifkan. Filter disederhanakan ke pure teknikal per-pair.
+#
+#   [v1.4.9-1]  BTC & F&G guard di check_intraday DIHAPUS
+#   [v1.4.9-2]  CHOPPY filter DIHAPUS — terlalu sering block valid pumps
+#   [v1.4.9-3]  ATR range diperlebar: 0.2–8% → 0.1–15%
+#   [v1.4.9-4]  Structure check & RSI hard filter DIHAPUS
+#   [v1.4.9-5]  Anomaly Mode & MTF 4h check DIHAPUS
+#   [v1.4.9-6]  F&G penalty di score_signal DIHAPUS (-0.5 saat F&G<20)
+#   [v1.4.9-7]  BTC alignment bonus di scoring DIHAPUS
+#   [v1.4.9-8]  portfolio_allows: hapus risk budget & same-side limit
+#   [v1.4.9-9]  Drawdown HALT dihapus — bot tetap scan, size dikurangi
+#   [v1.4.9-10] BTC crash halt & volatile guard di run() DIHAPUS
+#
+#   Layer aktif setelah perombakan:
+#   L1: Volume $10M + stablecoin blacklist + leveraged token filter
+#   L2: BLOCK_HOURS WIB (jam historis buruk)
+#   L3: Volume spike 1.2× + Pump/dump filter
+#   L4: EMA + RSI + MACD + Volume scoring (F&G & BTC sebagai info saja)
+#   L5: Score >= MIN_SCORE + RR >= MIN_RR + MAX_SL_PCT
+#   L6: Portfolio penuh + Pair sudah open
+#
+# CHANGELOG v1.4.7 → v1.4.8
+#   [DATA-8b] Tambah STABLECOIN_BLACKLIST (20 pairs): USDC, BUSD, DAI,
+#             TUSD, USD1, RLUSD, FDUSD, FRAX, dll. Pair stablecoin
+#             volume tinggi tapi harga flat $1 — tidak pernah ada signal
+#             tapi waste waktu scan. Dihapus dari pair list sebelum scan.
+#
+# CHANGELOG v1.4.5 → v1.4.6
+#   [FIX-NOTIF]  Open Trades hanya dikirim jika ada posisi terbuka.
+#   [FIX-DAILY]  Daily Report guard 1x/hari via Supabase config.
+#   [FIX-LOG]    Tambah reject reason log: score < min, RR < MIN_RR.
+#   [DATA-8]     MIN_VOLUME_USDT 150K → 10M USDT: eliminasi pair illikuid,
+#                spread lebar, dan rentan manipulasi pump/dump.
+#                Pair volume < $10M 24h akan difilter di pre-scan.
+#
 # CHANGELOG v1.4.3 → v1.4.4  — DATA-DRIVEN PROFITABILITY FIX
 #   Semua perubahan didasarkan pada analisis 280 trades aktual dari Supabase.
 #
@@ -127,7 +165,7 @@ import gate_api
 #  VERSI & LOGGING
 # ════════════════════════════════════════════════════════
 
-BOT_VERSION = "1.4.6-lite"
+BOT_VERSION = "1.4.9-lite"
 WIB = timezone(timedelta(hours=7))
 
 class _WIBFormatter(logging.Formatter):
@@ -166,17 +204,17 @@ def get_gate_client():
 #  KONFIGURASI
 # ════════════════════════════════════════════════════════
 
-MIN_VOLUME_USDT     = 150_000
+MIN_VOLUME_USDT     = 10_000_000  # [DATA-8] 150K → 10M USDT: filter pair illikuid & manipulasi
 MAX_SIGNALS_CYCLE   = 13        # [TUNE-4] 5 → 13
 DEDUP_HOURS         = 4         # [TUNE-8] 6 → 4
 PAIR_COOLDOWN_HOURS = 12        # [TUNE-7] 24 → 12
 
-MIN_SCORE           = 3.5       # [DATA-5] 3.0 → 3.5: analisis 280 trades menunjukkan Tier B
+MIN_SCORE           = 2.8       # [v1.4.9] 3.5 → 2.8: prioritas volume signal, filter BTC/F&G sudah dihapus
                                 #          (score < 3.0) WR hanya 13.9% avg PnL -$0.36 — racun utama.
                                 #          Tier A (3.0–3.4) WR 32.4% avg +$0.12.
                                 #          Tier A+ (≥3.5) WR 45.1% — volume terbesar, basis terkuat.
                                 #          Naik ke 3.5 eliminasi Tier B sepenuhnya (79 trades hilang).
-MIN_RR              = 1.8       # [DATA-6] 1.5 → 1.8: actual RR dari data 280 trades hanya 1.28
+MIN_RR              = 1.5       # [v1.4.9] 1.8 → 1.5: longgarkan RR agar lebih banyak setup lolos
                                 #          (avg win $1.25 vs avg loss $0.98). Dengan WR 42.7%,
                                 #          break-even butuh RR 1.28 → ekspektasi/trade -$0.024 (negatif).
                                 #          RR 1.8 paksa setup lebih asimetris: TP lebih jauh dari SL,
@@ -194,7 +232,7 @@ BTC_RANGE_1H           = 2.5    # BTC 1h high-low range > 2.5% = choppy
 BTC_TREND_LOOKBACK     = 4
 BTC_TREND_MIN_BEARISH  = 3
 
-TP1_R             = 1.8       # [DATA-6] disesuaikan dengan MIN_RR baru
+TP1_R             = 1.5       # [v1.4.9] konsisten dengan MIN_RR 1.5
 TP2_R             = 3.0       # [DATA-6] dinaikkan proporsional: TP2 lebih jauh = winner lebih besar
 SL_ATR_MULT       = 2.0
 ATR_SL_BUFFER     = 0.5
@@ -235,7 +273,7 @@ SIGNAL_EXPIRE_HOURS = 18          # [v1.4] 36 → 18: lebih sesuai INTRADAY
 # Jam 11 WIB = -$0.99, WR 33%
 # Jam profitable yang dibiarkan aktif: 07,08,10,14,17,20,21,22
 # Estimasi PnL saved jika jam ini diblock: +$30.50
-_default_block = "23,0,1,2,3,4,5,6,11,12,13,15,16,18"
+_default_block = ""  # [v1.4.9] BLOCK_HOURS dinonaktifkan — bot scan 24 jam penuh
 BLOCK_HOURS_WIB = set(
     int(h.strip())
     for h in os.getenv("BLOCK_HOURS_WIB", _default_block).split(",")
@@ -267,7 +305,7 @@ JSONL_PATH            = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # - Volume minimum 2× rata-rata (lebih ketat dari normal 1.2×)
 # - Tujuan: temukan koin yang bergerak melawan arus = genuine momentum
 ANOMALY_FG_THRESHOLD = 30       # F&G di bawah ini → anomaly mode aktif
-ANOMALY_OUTPERFORM   = 0.015    # pair harus naik minimal 1.5% lebih dari BTC 1h
+# ANOMALY_OUTPERFORM dihapus di v1.4.9 — anomaly mode tidak dipakai
 ANOMALY_VOL_MULT     = 2.0      # volume minimum 2× rata-rata
 
 # ── SCAN_MODE ─────────────────────────────────────────────────────────────────
@@ -787,11 +825,8 @@ def score_signal(side: str, price: float, closes: list,
     elif side == "SELL" and 35 <= rsi <= 60:
         raw_bonus += 0.3
 
-    # BTC alignment
-    if side == "BUY" and btc_4h > 0:
-        raw_bonus += 0.3
-    elif side == "SELL" and btc_4h < 0:
-        raw_bonus += 0.3
+    # [v1.4.9] BTC alignment dihapus dari scoring
+    # Altcoin bisa pump meski BTC flat/turun di kondisi decoupled market
 
     # Structure quality
     sh = structure.get("last_sh")
@@ -802,10 +837,9 @@ def score_signal(side: str, price: float, closes: list,
     # Hard cap bonus — TIDAK BOLEH melebihi +0.5
     bonus = min(raw_bonus, 0.5)
 
-    # F&G extreme penalty (applied setelah cap — tidak di-clamp)
-    penalty = -0.5 if (fg < 20 or fg > 80) else 0.0
-
-    score += bonus + penalty
+    # [v1.4.9] F&G penalty dihapus — kondisi fear/greed tidak relevan
+    # untuk altcoin yang pump independen dari sentiment global
+    score += bonus
 
     # Regime multiplier — RANGING sedikit dipenalti
     if regime == "RANGING":
@@ -1015,13 +1049,27 @@ def get_all_pairs(client) -> list[str]:
             "ON_USDT",              # ETF/stock tracker (BABAON, TSLAON, dll)
         ]
 
+        # [DATA-8] Stablecoin blacklist — pair ini tidak akan pernah ada signal
+        # karena harganya flat di $1. Dipisah dari EXCLUDED_SUFFIXES karena
+        # ini exact match bukan suffix match.
+        STABLECOIN_BLACKLIST = {
+            "USDC_USDT", "BUSD_USDT", "DAI_USDT", "TUSD_USDT",
+            "USDP_USDT", "GUSD_USDT", "FRAX_USDT", "LUSD_USDT",
+            "USD1_USDT", "RLUSD_USDT", "USDD_USDT", "FDUSD_USDT",
+            "PYUSD_USDT", "CUSD_USDT", "SUSD_USDT", "EURC_USDT",
+            "EURS_USDT", "EURT_USDT", "AGEUR_USDT", "XSGD_USDT",
+        }
+
         for t in tickers:
             try:
                 pair = str(t.currency_pair)
                 if not pair.endswith("_USDT"):
                     continue
-                # Skip blacklisted tokens
+                # Skip leveraged tokens
                 if any(pair.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+                    continue
+                # Skip stablecoins — harga flat, tidak ada signal
+                if pair in STABLECOIN_BLACKLIST:
                     continue
                 vol = float(t.quote_volume or 0)
                 if vol >= MIN_VOLUME_USDT:
@@ -1359,16 +1407,11 @@ def is_in_cooldown(pair: str) -> bool:
 # ════════════════════════════════════════════════════════
 
 def check_intraday(client, pair: str, price: float,
-                   btc: dict, fg: int = 50,
+                   btc: dict = None, fg: int = 50,
                    side: str = "BUY") -> dict | None:
-    if btc.get("halt"):
-        return None
-    if side == "BUY" and btc.get("block_buy"):
-        return None
-    # btc_bearish_trend: skip di anomaly mode (F&G < threshold)
-    # Saat extreme fear, pair outperform justru sinyal kuat meski BTC bearish
-    if side == "BUY" and btc.get("btc_bearish_trend") and fg >= ANOMALY_FG_THRESHOLD:
-        return None
+    # [v1.4.9] BTC & F&G guard dihapus — altcoin sering pump independen
+    # dari kondisi BTC dan F&G (decoupled market). Setiap pair dievaluasi
+    # murni berdasarkan teknikal masing-masing.
 
     data = get_candles(client, pair, "1h", 150)  # [v1.4] 100 → 150: EMA lebih akurat
     if data is None:
@@ -1377,12 +1420,12 @@ def check_intraday(client, pair: str, price: float,
 
     atr = calc_atr(closes, highs, lows)
     atr_pct = atr / price * 100
-    if atr_pct < 0.2 or atr_pct > 8.0:
+    # [v1.4.9] ATR range diperlebar — hanya block yang benar-benar flat (<0.1%)
+    # atau ekstrem volatil (>15%). CHOPPY filter dihapus — sering block valid signal.
+    if atr_pct < 0.1 or atr_pct > 15.0:
         return None
 
     mkt = detect_regime(closes, highs, lows)
-    if mkt["regime"] == "CHOPPY":
-        return None
 
     rsi        = calc_rsi(closes)
     macd, msig = calc_macd(closes)
@@ -1390,14 +1433,9 @@ def check_intraday(client, pair: str, price: float,
     ema50      = calc_ema(closes, 50)
     structure  = detect_structure(closes, highs, lows)
 
-    if not structure["valid"]:
-        return None
-
-    # RSI hard filter — block entry overbought/oversold ekstrem
-    if side == "BUY" and rsi > 70:
-        return None   # overbought — jangan BUY
-    if side == "SELL" and rsi < 30:
-        return None   # oversold — jangan SELL
+    # [v1.4.9] Structure & RSI hard filter dihapus — terlalu sering block
+    # valid pumps yang memang RSI tinggi tapi momentum kuat
+    # RSI masih dipakai sebagai input score, bukan hard block
 
     score = score_signal(
         side, price, closes, highs, lows, volumes,
@@ -1424,61 +1462,11 @@ def check_intraday(client, pair: str, price: float,
         score = round(score + 0.3, 2)   # bonus akumulasi terdeteksi
         log(f"      {pair} — akumulasi terdeteksi: OBV={accu['obv_slope']:+.2f} CMF={accu['cmf']:+.2f} → score +0.3")
 
-    # Score threshold — lebih rendah di anomaly mode (F&G < 30)
-    min_score_eff = 2.5 if fg < ANOMALY_FG_THRESHOLD else MIN_SCORE
-    if score < min_score_eff:
-        log(f"      {pair} — score {score:.2f} < {min_score_eff:.1f} (min) — skip")
-        return None   # score tidak cukup
-
-    # DEBUG anomaly — log pair yang sampai sini
-    if fg < ANOMALY_FG_THRESHOLD:
-        log(f"      {pair} — lolos pre-filter, masuk anomaly check (score={score:.1f})")
-
-    # Multi-timeframe 4h confirmation [Feature 3]
-    # Anomaly mode (F&G < 30): MTF 4h dilewati — fokus ke relative strength vs BTC
-    anomaly_mode = fg < ANOMALY_FG_THRESHOLD
-
-    if anomaly_mode:
-        # Anomaly filter — pair harus outperform BTC
-        # Pakai perubahan harga 3 candle terakhir (3h) untuk lebih stabil dari 1 candle
-        btc_1h_chg = btc.get("btc_1h", 0.0) / 100
-        closes_arr = closes
-        if len(closes_arr) >= 4:
-            pair_3h_chg = (closes_arr[-1] - closes_arr[-4]) / closes_arr[-4]
-        elif len(closes_arr) >= 2:
-            pair_3h_chg = (closes_arr[-1] - closes_arr[-2]) / closes_arr[-2]
-        else:
-            pair_3h_chg = 0.0
-        relative_strength = pair_3h_chg - (btc_1h_chg * 3)  # normalize BTC ke 3h
-
-        # Pair harus outperform BTC minimal ANOMALY_OUTPERFORM
-        if side == "BUY" and relative_strength < ANOMALY_OUTPERFORM:
-            return None
-
-        # Volume anomaly — pakai 1.5× (tidak seketat 2× sebelumnya)
-        avg_vol_anom = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else 0
-        if avg_vol_anom > 0 and volumes[-1] < avg_vol_anom * 1.5:
-            return None
-
-        log(f"      {pair} — 🔥 ANOMALY: RS={relative_strength*100:+.1f}% (3h) vs BTC {btc.get('btc_1h',0):+.1f}%")
-
-    else:
-        # Normal mode — MTF 4h wajib
-        data_4h = get_candles(client, pair, "4h", 60)
-        if data_4h:
-            closes_4h, highs_4h, lows_4h, _ = data_4h
-            ema20_4h = calc_ema(closes_4h, 20)
-            ema50_4h = calc_ema(closes_4h, 50)
-            macd_4h, msig_4h = calc_macd(closes_4h)
-
-            if side == "BUY":
-                tf4_bullish = (ema20_4h > ema50_4h) and (macd_4h > msig_4h)
-                if not tf4_bullish:
-                    return None
-            else:
-                tf4_bearish = (ema20_4h < ema50_4h) and (macd_4h < msig_4h)
-                if not tf4_bearish:
-                    return None
+    # [v1.4.9] Score threshold flat — tidak ada anomaly mode, tidak ada MTF 4h
+    # Semua pair dievaluasi dengan threshold yang sama: MIN_SCORE
+    if score < MIN_SCORE:
+        log(f"      {pair} — score {score:.2f} < {MIN_SCORE} (min) — skip")
+        return None
 
     # WR-based threshold per pair [Feature 1]
     wr_data   = get_pair_winrate(pair)
@@ -1493,11 +1481,11 @@ def check_intraday(client, pair: str, price: float,
     if wr_adj != 0:
         log(f"      {pair} WR={wr_pct:.0f}% (n={wr_trades}) → score adj {wr_adj:+.1f}")
 
-    # Adaptive threshold saat BTC bearish — naikkan bar saat trend tidak mendukung
-    # [DATA-1] Base MIN_SCORE=3.0; +0.3 untuk pair bermasalah; +0.5 saat BTC bearish 2+ cycle
-    bearish_cycles = btc.get("btc_bearish_cycles", 0)
-    adaptive_min   = MIN_SCORE + wr_adj + (0.5 if bearish_cycles >= 2 else 0.0)
+    # [v1.4.9] Adaptive threshold dipersimpel — hanya WR adjustment
+    # BTC bearish cycles tidak dipakai lagi sebagai multiplier
+    adaptive_min = MIN_SCORE + wr_adj
     if score < adaptive_min:
+        log(f"      {pair} — score {score:.2f} < adaptive_min {adaptive_min:.1f} (WR adj {wr_adj:+.1f}) — skip")
         return None
 
     last_sh = structure.get("last_sh")
@@ -1568,29 +1556,17 @@ def check_intraday(client, pair: str, price: float,
 # ════════════════════════════════════════════════════════
 
 def portfolio_allows(sig: dict, state: dict, drawdown: dict) -> bool:
+    """[v1.4.9] Check simpel — hanya blok jika portfolio penuh atau pair sudah open."""
+    pair = sig["pair"]
+
     if state["total"] >= MAX_OPEN_TRADES:
-        log(f"   ⛔ {sig['pair']} — portfolio penuh ({state['total']}/{MAX_OPEN_TRADES})")
+        log(f"   ⛔ {pair} — portfolio penuh ({state['total']}/{MAX_OPEN_TRADES})")
         return False
-    if sig["side"] == "BUY" and state["buy"] >= MAX_SAME_SIDE:
-        log(f"   ⛔ {sig['pair']} — max BUY ({state['buy']}/{MAX_SAME_SIDE})")
+
+    if pair in state.get("open_pairs", []):
+        log(f"   ⛔ {pair} — pair sudah open")
         return False
-    if sig["side"] == "SELL" and state["sell"] >= MAX_SAME_SIDE:
-        log(f"   ⛔ {sig['pair']} — max SELL ({state['sell']}/{MAX_SAME_SIDE})")
-        return False
-    if sig["pair"] in state.get("open_pairs", []):
-        log(f"   ⛔ {sig['pair']} — pair sudah open")
-        return False
-    # [FIX HIGH-1] Gunakan equity aktual (INITIAL_EQUITY + cum_pnl), bukan INITIAL_EQUITY statis.
-    # Equity aktual dihitung dari drawdown state yang sudah dihitung sebelumnya di run().
-    # Fallback ke INITIAL_EQUITY jika drawdown state tidak tersedia.
-    actual_equity = state.get("actual_equity", INITIAL_EQUITY)
-    if actual_equity <= 0:
-        actual_equity = INITIAL_EQUITY
-    new_risk       = actual_equity * RISK_PER_TRADE
-    total_risk_pct = (state["total_risk_usdt"] + new_risk) / actual_equity
-    if total_risk_pct > MAX_RISK_TOTAL:
-        log(f"   ⛔ {sig['pair']} — risk budget penuh ({total_risk_pct*100:.1f}% dari equity aktual ${actual_equity:.2f})")
-        return False
+
     return True
 
 # ════════════════════════════════════════════════════════
@@ -2331,24 +2307,12 @@ def run():
         f"Range:{btc['btc_1h_range']:.1f}% {vol_icon} | "
         f"F&G:{fg} | Trend:{'⚠️ BEARISH' if btc['btc_bearish_trend'] else '✅ OK'}")
 
+    # [v1.4.9] BTC crash halt & volatile guard dihapus
+    # BTC info tetap di-fetch untuk log saja, tidak memblok scan
     if btc.get("halt"):
-        log("🚨 BTC CRASH — semua signal diblok", "error")
-        tg_operator("🚨 <b>BTC Crash Alert</b>\nSemua signal diblok sementara.")
-        save_equity_snapshot(open_trades=lifecycle.get("evaluated", 0))
-        return
-
-    # BTC Volatility guard — skip scan saat BTC terlalu agresif
-    if btc["btc_volatile"]:
-        log(f"⚡ BTC volatile — 1h:{btc['btc_1h']:+.1f}% | "
-            f"range:{btc['btc_1h_range']:.1f}% — scan dilewati", "warn")
-        tg_operator(
-            f"⚡ <b>BTC Volatile — Scan Dilewati</b>\n"
-            f"BTC 1h : {btc['btc_1h']:+.1f}%\n"
-            f"Range  : {btc['btc_1h_range']:.1f}%\n"
-            f"<i>Market terlalu choppy. Open trades tetap dipantau.</i>"
-        )
-        save_equity_snapshot(open_trades=lifecycle.get("evaluated", 0))
-        return
+        log("⚠️ BTC crash terdeteksi — scan tetap jalan (guard dinonaktifkan)", "warn")
+    if btc.get("btc_volatile"):
+        log(f"⚡ BTC volatile — scan tetap jalan (guard dinonaktifkan)", "warn")
 
     drawdown = get_drawdown_state()
     dd_mode  = drawdown["mode"]
@@ -2362,17 +2326,9 @@ def run():
         f"dd={drawdown['dd_pct']*100:.1f}% | mode={dd_mode.upper()} | "
         f"equity_aktual=${actual_equity:.2f}")
 
+    # [v1.4.9] Drawdown HALT dihapus — bot tetap entry meski streak loss
     if dd_mode == "halt":
-        reason = f"streak={drawdown['streak']}, equity_dd={drawdown['dd_pct']*100:.1f}%"
-        set_bot_halt(True, reason, drawdown["streak"])
-        tg_operator(
-            f"⚠️ <b>Drawdown Alert — HALT</b>\n"
-            f"Streak : {drawdown['streak']} loss berturutan\n"
-            f"DD     : {drawdown['dd_pct']*100:.1f}% dari peak\n"
-            f"<i>Bot HALT. Auto-reset jika kondisi membaik.</i>"
-        )
-        save_equity_snapshot()
-        return
+        log("⚠️ DD HALT mode — position size dikurangi, scan tetap jalan", "warn")
 
     # Drawdown Warning — kirim hanya saat streak BARU mencapai threshold
     # Cegah spam tiap run dengan cek apakah streak sudah pernah dikirim
