@@ -778,7 +778,7 @@ def score_signal(side: str, price: float, closes: list,
       +0.3 RSI zona ideal (40-60 untuk BUY, 40-60 untuk SELL)
       +0.3 BTC 4h searah entry
       +0.2 Structure quality
-      -0.5 F&G ekstrem (<20 atau >80) — penalty tidak di-clamp
+      [v1.4.9] F&G penalty dihapus — F&G tidak mempengaruhi score
 
     Regime: RANGING multiplier 0.85
     """
@@ -2775,9 +2775,9 @@ def _run_unit_tests() -> bool:
             ema20=ema20, ema50=ema50, regime="TRENDING",
             btc_4h=0.5, fg=10   # F&G ekstrem fear
         )
-        _assert(score_fg_extreme < score_buy,
-                "F&G ekstrem: skor lebih rendah dari kondisi normal",
-                f"fg_extreme={score_fg_extreme} vs normal={score_buy}")
+        _assert(isinstance(score_fg_extreme, float) and score_fg_extreme >= 0,
+                "F&G ekstrem: skor tetap valid float (penalty dihapus v1.4.9)",
+                f"fg_extreme={score_fg_extreme}")
 
         # Regime RANGING harus di-penalti (× 0.85)
         score_ranging = score_signal(
@@ -2849,16 +2849,15 @@ def _run_unit_tests() -> bool:
         _assert(not portfolio_allows(base_sig, dup_state, base_dd),
                 "portfolio_allows: pair sudah open → False")
 
-        # Max same side BUY
+        # [v1.4.9] Max same side & risk budget dihapus dari portfolio_allows
+        # Test diubah: pastikan fungsi tidak crash dengan state yang punya field ini
         max_buy_state = {**base_state, "buy": MAX_SAME_SIDE}
-        _assert(not portfolio_allows(base_sig, max_buy_state, base_dd),
-                "portfolio_allows: buy >= MAX_SAME_SIDE → False",
-                f"buy={MAX_SAME_SIDE}")
+        _assert(isinstance(portfolio_allows(base_sig, max_buy_state, base_dd), bool),
+                "portfolio_allows: buy >= MAX_SAME_SIDE → tetap return bool (limit dihapus v1.4.9)")
 
-        # Risk budget habis
         high_risk_state = {**base_state, "total_risk_usdt": 350.0 * MAX_RISK_TOTAL}
-        _assert(not portfolio_allows(base_sig, high_risk_state, base_dd),
-                "portfolio_allows: risk budget penuh → False")
+        _assert(isinstance(portfolio_allows(base_sig, high_risk_state, base_dd), bool),
+                "portfolio_allows: risk budget state → tetap return bool (limit dihapus v1.4.9)")
 
     except Exception as e:
         print(f"  ❌ EXCEPTION portfolio_allows: {e}\n{traceback.format_exc()}")
@@ -2937,9 +2936,11 @@ def _run_unit_tests() -> bool:
             ema20=ema20_s, ema50=ema50_s, regime="TRENDING",
             btc_4h=0.3, fg=55
         )
-        _assert(score_greed < score_normal_fg,
-                "F&G > 80 (extreme greed): score lebih rendah",
-                f"greed={score_greed} vs normal={score_normal_fg}")
+        # [v1.4.9] F&G penalty dihapus — score F&G>80 sama dengan normal
+        # Test diubah: pastikan score tidak crash (tetap float valid)
+        _assert(isinstance(score_greed, float) and score_greed >= 0,
+                "F&G > 80 (extreme greed): score tetap valid float (penalty dihapus v1.4.9)",
+                f"greed={score_greed}")
 
         # CHOPPY regime — score tidak di-penalti (hanya RANGING yang di-penalti)
         score_choppy = score_signal(
