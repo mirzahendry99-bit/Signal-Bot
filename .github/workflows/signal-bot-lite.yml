@@ -64,6 +64,10 @@ jobs:
         run: python "${{ env.BOT_FILE }}" --test
 
       - name: Run bot
+        # BLOCK_HOURS_WIB default KOSONG (24 jam scan penuh) — fase monitoring
+        # 30-60 hari untuk kumpulkan data bersih sebelum ada keputusan block
+        # hours berbasis data (bukan asumsi manual). Ubah lewat repo variable
+        # vars.BLOCK_HOURS_WIB kalau nanti sudah waktunya, bukan edit di sini.
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
@@ -75,7 +79,7 @@ jobs:
           SCAN_MODE:            ${{ github.event.inputs.scan_mode || 'full' }}
           SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
           TG_NOTIFY_LEVEL:      ${{ vars.TG_NOTIFY_LEVEL || 'signal' }}
-          BLOCK_HOURS_WIB:      ${{ vars.BLOCK_HOURS_WIB || '23,0,1,2,3,4,5,6,11,12,13,15,16,18' }}
+          BLOCK_HOURS_WIB:      ${{ vars.BLOCK_HOURS_WIB || '' }}
         run: |
           for i in 1 2 3; do
             python "${{ env.BOT_FILE }}" && break
