@@ -1,0 +1,112 @@
+name: Signal Bot Lite
+
+on:
+  schedule:
+    - cron: "0 * * * *"    # setiap jam — full scan
+    - cron: "30 * * * *"   # setiap 30 menit — monitor open trades
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Alasan manual run (opsional)"
+        required: false
+        default: "manual trigger"
+      scan_mode:
+        description: "Scan mode: full (default) atau monitor"
+        required: false
+        default: "full"
+      sell_enabled:
+        description: "Aktifkan SELL signals? (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: signal-bot-lite
+  cancel-in-progress: false   # tunggu run selesai, jangan cancel
+
+jobs:
+  run-bot:
+    name: Run Signal Bot Lite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Detect bot script
+        run: |
+          BOT_FILE=$(ls bot_lite*.py 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$BOT_FILE" ]; then
+            echo "❌ Tidak ada file bot_lite*.py ditemukan di root repo"
+            exit 1
+          fi
+          echo "🤖 Bot script terdeteksi: $BOT_FILE"
+          echo "BOT_FILE=$BOT_FILE" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:             ${{ secrets.CHAT_ID }}
+          GATE_API_KEY:        ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY:     ${{ secrets.GATE_SECRET_KEY }}
+          INITIAL_EQUITY_USDT: ${{ secrets.INITIAL_EQUITY_USDT }}
+        run: python "${{ env.BOT_FILE }}" --test
+
+      - name: Run bot
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN:       ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:              ${{ secrets.CHAT_ID }}
+          GATE_API_KEY:         ${{ secrets.GATE_API_KEY }}
+          GATE_SECRET_KEY:      ${{ secrets.GATE_SECRET_KEY }}
+          INITIAL_EQUITY_USDT:  ${{ secrets.INITIAL_EQUITY_USDT }}
+          SCAN_MODE:            ${{ github.event.inputs.scan_mode || 'full' }}
+          SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
+          TG_NOTIFY_LEVEL:      ${{ vars.TG_NOTIFY_LEVEL || 'signal' }}
+          BLOCK_HOURS_WIB:      ${{ vars.BLOCK_HOURS_WIB || '23,0,1,2,3,4,5,6,11,12,13,15,16,18' }}
+        run: |
+          for i in 1 2 3; do
+            python "${{ env.BOT_FILE }}" && break
+            echo "Attempt $i failed, retrying..."
+            sleep 10
+          done
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID:        ${{ secrets.CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+          -d chat_id="${CHAT_ID}" \
+          -d text="⚠️ Signal Bot Lite — GitHub Actions GAGAL. Cek Actions tab."
+
+      - name: Upload signals.jsonl
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signals-jsonl-${{ github.run_number }}
+          path: signals.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload halt_state.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: halt-state-${{ github.run_number }}
+          path: halt_state.json
+          if-no-files-found: ignore
+          retention-days: 3
