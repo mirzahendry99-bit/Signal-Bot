@@ -78,7 +78,9 @@ jobs:
           INITIAL_EQUITY_USDT:  ${{ secrets.INITIAL_EQUITY_USDT }}
           SCAN_MODE:            ${{ github.event.inputs.scan_mode || 'full' }}
           SELL_ENABLED:         ${{ github.event.inputs.sell_enabled || vars.SELL_ENABLED || 'false' }}
-          TG_NOTIFY_LEVEL:      ${{ vars.TG_NOTIFY_LEVEL || 'signal' }}
+          # 'full' = kirim juga Diagnostic Mode/Daily Health/Adaptive Strategy
+          # (bukan cuma sinyal trade) — penting buat fase monitoring sekarang.
+          TG_NOTIFY_LEVEL:      ${{ vars.TG_NOTIFY_LEVEL || 'full' }}
           BLOCK_HOURS_WIB:      ${{ vars.BLOCK_HOURS_WIB || '' }}
         run: |
           for i in 1 2 3; do
